@@ -210,10 +210,10 @@ library(cluster)
 
 ```{r}
 # Elbow Method
-#fviz_nbclust(clustering_data, kmeans, method = "wss")
+fviz_nbclust(clustering_data, kmeans, method = "wss")
 
 # Silhouette Method
-#fviz_nbclust(clustering_data, kmeans, method = "silhouette")
+fviz_nbclust(clustering_data, kmeans, method = "silhouette")
 ```
 
 #### **Step 2: Apply K-Means Clustering**
@@ -256,11 +256,6 @@ fviz_silhouette(kmeans_result)
 # Mean silhouette width
 mean(kmeans_result$silinfo$widths[, "sil_width"])
 
-# Interpretation:
-# • 0.70–1.00 = Strong structure
-# • 0.50–0.70 = Reasonable
-# • 0.25–0.50 = Weak
-# • < 0.25 = Possibly random
 
 table(kmeans_result$cluster)
 ```
@@ -279,297 +274,6 @@ ggplot(cluster_sizes, aes(x = as.factor(Cluster), y = Count, fill = as.factor(Cl
   labs(
     title = "Cluster Size Distribution (K-Means Clustering)",
     subtitle = paste("Total Observations:", sum(cluster_sizes$Count)),
-    x = "Cluster Number",
-    y = "Number of Observations",
-    fill = "Cluster"
-  ) +
-  theme_minimal()
-```
-
-### GMM
-
-#### Step 1: Prepare Data for Clustering
-
-```{r}
-GMM_data <- as.data.frame(famd_result$ind$coord[, 1:4])
-
-# Check structure to ensure it's numeric
-str(GMM_data)
-```
-
-#### Step 2: Load Required Packages
-
-```{r}
-# install.packages("mclust")
-# install.packages("factoextra")
-# install.packages("cluster")
-library(mclust)
-library(factoextra)
-library(cluster)
-```
-
-#### Step 3: Determine Optimal Number of Clusters using BIC
-
-```{r}
-gmm_model_selection <- Mclust(GMM_data)
-plot(gmm_model_selection, what = "BIC")
-
-# Print model summary to inspect optimal number of components
-summary(gmm_model_selection)
-```
-
-#### Step 4: Apply GMM Clustering with Optimal G
-
-```{r}
-gmm_result <- Mclust(GMM_data, G = gmm_model_selection$G)
-
-# Check number of data points per cluster
-table(gmm_result$classification)
-```
-
-#### Step 5: Visualise Cluster Results
-
-```{r}
-fviz_cluster(
-  list(data = GMM_data, cluster = gmm_result$classification),
-  geom = "point",
-  ellipse.type = "norm",  # Gaussian ellipses
-  ggtheme = theme_minimal()
-)
-```
-
-#### Step 6: Add Cluster Labels to GMM_data
-
-```{r}
-GMM_data$cluster <- gmm_result$classification
-```
-
-#### Step 7: Evaluate Clustering Quality using Silhouette Score
-
-```{r}
-dist_matrix_gmm <- dist(GMM_data[, 1:4])
-sil_gmm <- silhouette(GMM_data$cluster, dist_matrix_gmm)
-
-# Silhouette plot
-fviz_silhouette(sil_gmm)
-
-# Mean silhouette width
-mean(sil_gmm[, "sil_width"])
-```
-
-```{r}
-library(ggplot2)
-
-# Create a dataframe of GMM cluster sizes
-gmm_cluster_sizes <- as.data.frame(table(gmm_result$classification))
-colnames(gmm_cluster_sizes) <- c("Cluster", "Count")
-
-# Plot bar chart with labels
-ggplot(gmm_cluster_sizes, aes(x = as.factor(Cluster), y = Count, fill = as.factor(Cluster))) +
-  geom_bar(stat = "identity") +
-  geom_text(aes(label = Count), vjust = -0.3, size = 4) +
-  labs(
-    title = "Cluster Size Distribution (Gaussian Mixture Model)",
-    subtitle = paste("Total Observations:", sum(gmm_cluster_sizes$Count)),
-    x = "Cluster Number",
-    y = "Number of Observations",
-    fill = "Cluster"
-  ) +
-  theme_minimal()
-```
-
-### CLARA (Scalable PAM for Large Datasets)
-
-#### Step 1: Prepare Data for Clustering
-
-```{r}
-CLARA_data <- as.data.frame(famd_result$ind$coord[, 1:4])
-
-# Check structure to ensure numeric dataframe
-str(CLARA_data)
-```
-
-#### Step 2: Load Required Packages
-
-```{r}
-# install.packages(c("cluster", "factoextra"))
-library(cluster)
-library(factoextra)
-```
-
-#### Step 3: Determine Optimal Number of Clusters (k)
-
-```{r}
-# Elbow Method
-#fviz_nbclust(CLARA_data, kmeans, method = "wss")
-
-# Silhouette Method
-#fviz_nbclust(CLARA_data, kmeans, method = "silhouette")
-```
-
-#### Step 4: Apply CLARA Clustering
-
-```{r}
-set.seed(123)  # For reproducibility
-
-clara_result <- clara(CLARA_data, k = 4, samples = 4)
-
-# View clustering result
-table(clara_result$clustering)
-```
-
-#### Step 5: Visualise Cluster Results
-
-```{r}
-fviz_cluster(
-  clara_result,
-  geom = "point",
-  ellipse.type = "norm",
-  ggtheme = theme_minimal()
-)
-```
-
-#### Step 6: Add Cluster Labels to CLARA_data
-
-```{r}
-CLARA_data$cluster <- clara_result$clustering
-```
-
-#### Step 7: Evaluate Clustering Quality
-
-```{r}
-# Silhouette Plot
-fviz_silhouette(clara_result)
-
-# Mean Silhouette Width
-mean(clara_result$silinfo$widths[, "sil_width"])
-```
-
-#### Step 8: Inspect Cluster Sizes
-
-```{r}
-table(CLARA_data$cluster)
-
-library(ggplot2)
-
-# Create a dataframe of CLARA cluster sizes
-clara_cluster_sizes <- as.data.frame(table(CLARA_data$cluster))
-colnames(clara_cluster_sizes) <- c("Cluster", "Count")
-
-# Plot bar chart with labels
-ggplot(clara_cluster_sizes, aes(x = as.factor(Cluster), y = Count, fill = as.factor(Cluster))) +
-  geom_bar(stat = "identity") +
-  geom_text(aes(label = Count), vjust = -0.3, size = 4) +
-  labs(
-    title = "Cluster Size Distribution (CLARA Clustering)",
-    subtitle = paste("Total Observations:", sum(clara_cluster_sizes$Count)),
-    x = "Cluster Number",
-    y = "Number of Observations",
-    fill = "Cluster"
-  ) +
-  theme_minimal()
-```
-
-### FUZZY C-MEANS
-
-#### Step 1: Prepare Data for Clustering
-
-```{r}
-# Use first 4 dimensions from FAMD output
-fuzzy_data <- as.data.frame(famd_result$ind$coord[, 1:4])
-
-# Check structure
-str(fuzzy_data)  # Ensure numeric dataframe
-```
-
-#### Step 2: Load Required Packages
-
-```{r}
-# install.packages("e1071")
-# install.packages("factoextra")
-library(e1071)
-library(factoextra)
-```
-
-#### Step 3: Determine Optimal Number of Clusters (k)
-
-```{r}
-# Elbow Method
-# fviz_nbclust(fuzzy_data, kmeans, method = "wss")
-
-# Silhouette Method
-# fviz_nbclust(fuzzy_data, kmeans, method = "silhouette")
-```
-
-#### Step 4: Apply Fuzzy C-Means Clustering
-
-```{r}
-# Step 4: Apply Fuzzy C-Means Clustering
-set.seed(123)
-
-fuzzy_data_scaled <- scale(fuzzy_data)
-
-fcm_result <- cmeans(
-  fuzzy_data_scaled,
-  centers = 4,
-  iter.max = 100,
-  m = 2,
-  verbose = FALSE
-)
-
-# View number of members in each cluster (based on max membership)
-table(fcm_result$cluster)
-```
-
-#### Step 5: Visualise Cluster Results
-
-```{r}
-# Step 5: Visualise Cluster Results
-fviz_cluster(
-  list(data = fuzzy_data_scaled, cluster = fcm_result$cluster),
-  geom = "point",
-  ellipse.type = "norm",
-  ggtheme = theme_minimal()
-)
-```
-
-#### Step 6: Add Cluster Labels to fuzzy_data
-
-```{r}
-# Step 6: Add Cluster Labels to fuzzy_data
-fuzzy_data$cluster <- fcm_result$cluster
-```
-
-#### Step 7: Evaluate Clustering Quality
-
-```{r}
-# Step 7: Evaluate Clustering Quality
-# FCM does not include silhouette output directly.
-# So we evaluate using silhouette on hard-cluster assignments.
-
-dist_matrix_fuzzy <- dist(fuzzy_data[, 1:4])
-sil_fuzzy <- silhouette(fuzzy_data$cluster, dist_matrix_fuzzy)
-
-# Silhouette plot
-fviz_silhouette(sil_fuzzy)
-
-# Mean silhouette width
-mean(sil_fuzzy[, "sil_width"])
-```
-
-```{r}
-library(ggplot2)
-
-# Step 1: Create a frequency table and convert to dataframe
-fcm_cluster_sizes <- as.data.frame(table(Cluster = fuzzy_data$cluster))
-
-# Step 2: Plot bar chart
-ggplot(fcm_cluster_sizes, aes(x = as.factor(Cluster), y = Freq, fill = as.factor(Cluster))) +
-  geom_bar(stat = "identity") +
-  geom_text(aes(label = Freq), vjust = -0.3, size = 4) +
-  labs(
-    title = "Cluster Size Distribution (Fuzzy C-Means Clustering)",
-    subtitle = paste("Total Observations:", sum(fcm_cluster_sizes$Freq)),
     x = "Cluster Number",
     y = "Number of Observations",
     fill = "Cluster"
@@ -744,7 +448,7 @@ ggplot(dimension_long, aes(x = Dimension, y = Average, group = factor(cluster), 
 
 # Clustering for All Data
 
-### K-MEANS
+### K-Medoids
 
 #### **Step 1: Prepare Data for Clustering**
 
@@ -830,7 +534,6 @@ data_clustering_ignorance$cluster <- as.factor(pam_result$clustering)
 ```
 
 ```{r}
-# Make sure you have the necessary libraries loaded
 library(dplyr)
 library(ggplot2)
 
@@ -839,15 +542,6 @@ library(ggplot2)
 # This creates a new data frame called 'cluster_sizes' with columns 'cluster' and 'n'.
 cluster_sizes <- data_clustering_ignorance %>%
   count(cluster)
-
-# You can print this to see the result:
-# print(cluster_sizes)
-#  cluster   n
-#  <fct>   <int>
-#1 1        ...
-#2 2        ...
-#3 3        ...
-
 
 # ---- STEP 2: Create the bar plot with labels ----
 ggplot(cluster_sizes, aes(x = cluster, y = n, fill = cluster)) +
@@ -1023,11 +717,11 @@ print(mode_by_cluster)
 ```
 
 ```{r}
-# 1. Hitung frekuensi
+# 1. count frequencies
 freq_R614 <- table(data_clustering_ignorance$R614)
 print(freq_R614)
 
-# 2. Barplot dengan base R
+# 2. Barplot 
 barplot(
   freq_R614,
   main     = "Distribusi R614",
@@ -1036,7 +730,7 @@ barplot(
   col      = c("steelblue","tomato"),
   ylim     = c(0, max(freq_R614) * 1.1)
 )
-# tambahkan label angka di atas batang
+# add label
 text(
   x      = barplot(freq_R614, plot = FALSE),
   y      = freq_R614,
@@ -1045,10 +739,10 @@ text(
   cex    = 0.8
 )
 
-# 3. Bar chart dengan ggplot2 (lebih fleksibel)
+# 3. Bar chart with ggplot2
 library(ggplot2)
 
-# ubah ke data frame untuk ggplot
+# convert to data frame untuk ggplot
 df_R614 <- as.data.frame(freq_R614)
 names(df_R614) <- c("R614", "count")
 
@@ -1239,26 +933,6 @@ data_clustering_ignorance %>%
     theme_minimal(base_size = 14)
 ```
 
-#### MDS Plot of Cluster
-
-```{r}
-# # Perform classical multidimensional scaling
-# mds <- cmdscale(gower_dist, k = 2)
-# 
-# mds_df <- data.frame(
-#   Dim1 = mds[, 1],
-#   Dim2 = mds[, 2],
-#   Cluster = data_clustering_ignorance$cluster
-# )
-# 
-# # Plot using ggplot2
-# library(ggplot2)
-# ggplot(mds_df, aes(x = Dim1, y = Dim2, color = Cluster)) +
-#   geom_point(alpha = 0.6, size = 1.5) +
-#   labs(title = "MDS Plot of PAM Clusters (Gower Distance)") +
-#   theme_minimal()
-```
-
 #### Try stratified sampling for plotting
 
 ```{r}
@@ -1323,27 +997,19 @@ ggplot(mds_df, aes(x = Dim1, y = Dim2, color = Cluster, fill = Cluster)) +
 ```
 
 ```{r}
-# Pastikan library ggplot2 sudah dimuat
 library(ggplot2)
-
-# Asumsikan 'mds_df' adalah data frame Anda dengan kolom Dim1, Dim2, dan Cluster
 
 ggplot(mds_df, aes(x = Dim1, y = Dim2, color = Cluster, fill = Cluster)) +
   
-  # Gambar elips cluster dengan garis tepi yang jelas
-  # Perubahan utama ada di baris ini:
-  # - Menghapus 'colour = NA'
-  # - Menambahkan 'size = 1' untuk membuat garis lebih tebal
-  # - Sedikit menaikkan alpha untuk isian agar lebih terlihat
   stat_ellipse(geom = "polygon", alpha = 0.2, size = 1) +
   
-  # Plot titik data individual
+  # Plot individual data
   geom_point(alpha = 0.7, size = 1.8, shape = 21, stroke = 0.3) +
   
-  # Tema minimalis yang bersih
+  # theme
   theme_minimal(base_size = 13) +
   
-  # Judul dan label sumbu
+  # title and label
   labs(
     title = "MDS Plot with All Variable",
     subtitle = "Clustering with All Variable",
@@ -1353,13 +1019,11 @@ ggplot(mds_df, aes(x = Dim1, y = Dim2, color = Cluster, fill = Cluster)) +
     fill = "Cluster"
   ) +
   
-  # Palet warna kontras yang sudah bagus
-  # Dark2 untuk garis tepi (points dan ellipse outline)
-  # Pastel2 untuk isian (ellipse fill)
+  # color pallete
   scale_color_brewer(palette = "Dark2") +
   scale_fill_brewer(palette = "Pastel2") +
   
-  # Memperbaiki legenda dan layout
+  # fix legend and layout
   theme(
     legend.position = "right",
     panel.grid.minor = element_blank(),
@@ -1368,7 +1032,3 @@ ggplot(mds_df, aes(x = Dim1, y = Dim2, color = Cluster, fill = Cluster)) +
     plot.subtitle = element_text(color = "grey40")
   )
 ```
-
-#### Step 6: Validate the Clustering
-
-#### Step 7: Interpret and Label the Clusters
