@@ -340,83 +340,10 @@ export_summary_to_excel <- function(summary_df, file_path = "model_performance_s
 cat("\n--- Section 4: Modelling and Evaluation ---\n")
 ```
 
-## 4.2 Logistic Regression
+## 4.1 Decision Tree
 
 ```{r}
-# # --- Section 5.1: Logistic Regression on FAMD Components ---
-# 
-# # 1. Load necessary libraries
-# library(caret)
-# library(dplyr)
-# 
-# cat("\n--- Training Logistic Regression on FAMD Data ---\n")
-# 
-# # 2. Prepare Training Data
-# # Start with the SMOTE-balanced data prepared from FAMD components.
-# train_lr_famd <- train_smote_universal
-# 
-# # 3. Apply Preprocessing Filters for Consistency
-# # NOTE: These filters are unlikely to remove any of the 3 FAMD components,
-# # but we include the steps to maintain a consistent workflow.
-# 
-# # 3.1 Apply Near-Zero Variance (NZV) filter
-# nzv_cols <- nearZeroVar(train_lr_famd, saveMetrics = FALSE)
-# if (length(nzv_cols) > 0) {
-#   train_lr_famd <- train_lr_famd[, -nzv_cols]
-#   cat("Removed", length(nzv_cols), "near-zero variance predictors.\n")
-# } else {
-#   cat("No NZV predictors found.\n")
-# }
-# 
-# # 3.2 Apply Correlation filter (FAMD components should be uncorrelated)
-# numeric_vars <- select(train_lr_famd, where(is.numeric))
-# if (ncol(numeric_vars) > 1) {
-#   corr_matrix <- cor(numeric_vars)
-#   high_corr_indices <- findCorrelation(corr_matrix, cutoff = 0.9)
-#   if (length(high_corr_indices) > 0) {
-#     train_lr_famd <- train_lr_famd[, -high_corr_indices]
-#     cat("Removed", length(high_corr_indices), "highly correlated predictors.\n")
-#   } else {
-#     cat("No highly correlated predictors found.\n")
-#   }
-# }
-# 
-# # 4. Align Test Data
-# # Ensure the test set has the exact same columns as the processed training set.
-# final_lr_famd_predictors <- setdiff(names(train_lr_famd), "MISKIN_KAKO")
-# test_lr_famd <- test_data_universal %>%
-#   select(all_of(final_lr_famd_predictors), MISKIN_KAKO)
-# 
-# # Add this line right after creating or loading your training data
-# train_lr_famd <- na.omit(train_lr_famd)
-# 
-# # 5. Train and Evaluate the Model
-# # Call our reusable function. 'glm' has no parameters to tune.
-# set.seed(123) # for reproducibility
-# model_lr_famd <- train_and_evaluate_model(
-#   train_data   = train_lr_famd,
-#   test_data    = test_lr_famd,
-#   model_name   = "Logistic Regression (FAMD)",
-#   method_caret = "glm"
-# )
-# 
-# cat("\nLogistic Regression (FAMD) model training and evaluation complete.\n")
-# 
-# # 6. Generate Updated Comparison Report
-# # This will now include the results from our new model.
-# final_summary_table <- create_comparison_table()
-# print(final_summary_table)
-# 
-# # Plot the updated final performance and diagnostic plots
-# plot_performance_barchart(final_summary_table)
-# plot_roc_curves(final_summary_table)
-# plot_cv_stability_boxplot()
-```
-
-## 4.3 Decision Tree
-
-```{r}
-# --- Section 5.2: Decision Tree on FAMD Components ---
+# --- Section 4.1: Decision Tree on FAMD Components ---
 
 # 1. Load necessary libraries
 library(caret)
@@ -493,10 +420,10 @@ plot_roc_curves(final_summary_table)
 plot_cv_stability_boxplot()
 ```
 
-## 4.3 Random Forest
+## 4.2 Random Forest
 
 ```{r}
-# --- Section 5.3: Random Forest on FAMD Components ---
+# --- Section 4.2: Random Forest on FAMD Components ---
 
 # 1. Load necessary libraries
 library(caret)
@@ -573,10 +500,10 @@ plot_roc_curves(final_summary_table)
 plot_cv_stability_boxplot()
 ```
 
-## 4.4 XGBoost
+## 4.3 XGBoost
 
 ```{r}
-# --- Section 5.4: XGBoost on FAMD Components ---
+# --- Section 4.3: XGBoost on FAMD Components ---
 
 # 1. Load necessary libraries
 library(caret)
