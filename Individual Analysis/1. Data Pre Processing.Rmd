@@ -25,8 +25,6 @@ kor_ind1 <- read.dbf("72_ssn_202403_kor_ind1.dbf")
 kor_ind2 <- read.dbf("72_ssn_202403_kor_ind2.dbf")
 kor_mig <- read.dbf("72_ssn_202403_kor_mig.dbf")
 kor_rt <- read.dbf("72_ssn_202403_kor_rt.dbf")
-kp.4.1 <- read.dbf("72_ssn_202403_kp_blok41.dbf")
-kp.4.2 <- read.dbf("72_ssn_202403_kp_blok42.dbf")
 kp.4.3 <- read.dbf("72_ssn_202403_kp_blok43.dbf")
 flag_pov <- read_sav("flag miskin kako maret24_72.sav")
 ```
@@ -46,13 +44,13 @@ kp_filtered <- kp.4.3 %>%
 # Left join: keep all rows from flag_pov
 kp.4.3.final <- left_join(flag_pov, kp_filtered, by = join_keys)
 
-# Buat desain survei dengan bobot
+# survey design
 design_kp <- svydesign(ids = ~1, data = kp.4.3.final, weights = ~WEIND)
 
-# Crosstab berbobot
+# Crosstab 
 tab <- svytable(~ R102 + MISKIN_KAKO, design = design_kp)
 
-# Tampilkan sebagai data frame
+# show dataframe
 p0 <- as.data.frame(tab)
 print(p0)
 ```
@@ -71,20 +69,18 @@ merged_data_kor <- left_join(kor_ind1, kor_ind2, by = common_features)
 
 ```{r}
 # join merged_data_kor and kp.4.3.final
-# data individu dengan variabel kemiskinan
 common_features <- intersect(names(merged_data_kor), names(kp.4.3.final))
 print(common_features)
 data_kor_ind <- left_join(merged_data_kor, kp.4.3.final, by = common_features)
 
 ```
 
-## 4. data rumah tangga and flag miskin
+## 4. household data and flag miskin
 
 ```{r}
 
 # -------------------
 # join merged_data_kor and kp.4.3.final
-# data rumah tangga dengan variabel kemiskinan
 common_features <- intersect(names(kor_rt), names(kp.4.3.final))
 print(common_features)
 data_kor_rt <- left_join(kor_rt, kp.4.3.final, by = common_features)
@@ -313,10 +309,10 @@ data_susenas <- filtered_data
 ```{r}
 library(dplyr)
 
-# Pastikan data dalam format karakter dulu
+# Ensure the data is in a character format first
 data_susenas$R612 <- as.character(data_susenas$R612)
 
-# Lakukan recoding
+#  recoding
 data_susenas$R612_recode <- case_when(
   data_susenas$R612 == "0"                                  ~ "Tidak Ditanyakan",
   data_susenas$R612 %in% c("1", "2", "3", "4", "5")          ~ "Setara SD",
@@ -331,7 +327,7 @@ data_susenas$R612_recode <- case_when(
   TRUE                                               ~ NA_character_
 )
 
-# Konversi ke factor dan urutkan level
+# Convert to a factor and order the levels.
 data_susenas$R612_recode <- factor(data_susenas$R612_recode,
                            levels = c("Tidak Ditanyakan", "Setara SD", "Setara SMP", "Setara SMA",
                                       "D1/D2", "D3", "D4/S1", "Profesi", "S2", "S3"))
@@ -340,7 +336,7 @@ data_susenas$R612 <- data_susenas$R612_recode
 data_susenas$R612_recode <- NULL
 ```
 
-## Var 614 STTB Tertinggi
+## Var 614 STTB (Highest)
 
 ```{r}
 library(dplyr)
@@ -383,8 +379,6 @@ metadata_label <- read_excel("fix metadata for recode.xlsx")
 metadata_label <- metadata_label %>%
   mutate(Code = as.character(Code))
 ```
-
-\
 
 ### **Apply mapping to each variable using a loop**
 
@@ -444,7 +438,7 @@ data_susenas$R2203_RT <- factor(
 ```{r}
 library(dplyr)
 
-# First ensure it's character (so you can modify values)
+# First ensure it's character 
 data_susenas$R2204A_RT <- as.character(data_susenas$R2204A_RT)
 
 # Replace "0" with "5"
@@ -463,7 +457,7 @@ data_susenas$R2204A_RT <- factor(data_susenas$R2204A_RT,
                                 levels = c("Ya", "Tidak", "Tidak Tahu"))
 
 
-# Daftar variabel dengan nilai 1 = Ya, 5 = Tidak
+# list of variables with values 1 = Yes, 5 = No.
 yes_no_vars <- c(
   "R1101", "R2209A_RT", "R2209B_RT", "R2209C_RT", "R2209D_RT",
   "R2201A2_RT", 
@@ -473,7 +467,7 @@ yes_no_vars <- c(
   "R2201F2_RT"
 )
 
-# Loop untuk recoding yang hanya punya "Ya" dan "Tidak"
+# Loop to recode variables that only have 'Yes' and 'No'
 for (var in yes_no_vars) {
   data_susenas[[var]] <- factor(
     case_when(
