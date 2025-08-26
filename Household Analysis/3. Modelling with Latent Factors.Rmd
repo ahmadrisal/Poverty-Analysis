@@ -1,0 +1,684 @@
+---
+title: "New Modelling Prior"
+author: "Ahmad Risal"
+date: "2025-06-20"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Load required libraries
+
+```{r}
+# Load required libraries (ensure they are installed)
+# install.packages(c("caret", "smotefamily", "ggplot2", "lme4", "pROC", "dplyr", "tidyr"))
+library(caret)      # For data partitioning, CV, and confusion matrix
+library(smotefamily) # For handling imbalanced data (SMOTE)
+library(ggplot2)    # For data visualisation
+library(lme4)       # For Generalized Linear Mixed-effect Models (GLMM)
+library(pROC)       # For calculating Area Under the Curve (AUC)
+library(dplyr)      # For efficient data manipulation (piping)
+library(tidyr)      # For data reshaping (pivot_longer, pivot_wider)
+```
+
+# Initial Data Preparation
+
+```{r}
+# --- Section 0: Initial Data Preparation (from your original code) ---
+# Assuming 'famd_result' and 'data_susenas' are available from previous steps.
+# This section is from your original code and included for completeness.
+
+# Extract the first 4 FAMD components
+famd_components <- as.data.frame(famd_result$ind$coord[, 1:3])
+colnames(famd_components) <- paste0("FAMD_", 1:3)
+
+data_susenas <- df_model_raw
+
+# Extract and convert R102 to factor
+# R102 <- as.factor(data_susenas$R102)
+
+# Convert MISKIN_KAKO to factor with labels
+MISKIN_KAKO <- factor(
+  ifelse(data_susenas$MISKIN_KAKO == "1", "MISKIN", "TIDAK MISKIN"),
+  levels = c("TIDAK MISKIN", "MISKIN")
+)
+
+# Combine into one dataframe
+data_ml <- data.frame(
+  famd_components,
+  MISKIN_KAKO = MISKIN_KAKO
+)
+
+```
+
+```{r}
+# Set seed for reproducibility
+set.seed(123)
+```
+
+# Section 1: Universal Train and Test Split
+
+## Section 2: Apply SMOTE on Universal Training Data
+
+```{r}
+# --- Section 0: Load Libraries ---
+library(caret)
+library(dplyr)
+library(themis)   # For SMOTE with ratio control
+library(ggplot2)
+
+# Assuming 'famd_result' and 'df_model_raw' are available.
+
+# --- Section 1: Initial Data Preparation ---
+cat("Step 1: Preparing data with FAMD components...\n")
+
+# Extract the first 3 FAMD components
+famd_components <- as.data.frame(famd_result$ind$coord[, 1:3])
+colnames(famd_components) <- paste0("FAMD_", 1:3)
+
+# Convert the target variable 'MISKIN_KAKO' to a factor with standardised labels
+MISKIN_KAKO <- factor(
+  ifelse(df_model_raw$MISKIN_KAKO == "1", "Poor", "NotPoor"),
+  levels = c("NotPoor", "Poor")
+)
+
+# Combine into the final modeling dataset
+data_ml <- data.frame(
+  famd_components,
+  MISKIN_KAKO = MISKIN_KAKO
+)
+
+# --- Section 2: Universal Train and Test Split ---
+cat("Step 2: Creating 75/25 train and test sets...\n")
+
+set.seed(123) # for reproducibility
+train_index <- createDataPartition(data_ml$MISKIN_KAKO, p = 0.75, list = FALSE)
+train_data_universal <- data_ml[train_index, ]
+test_data_universal <- data_ml[-train_index, ]
+
+# --- Section 3: Apply SMOTE for a 60:40 Balance ---
+cat("Step 3: Applying SMOTE to achieve a 60:40 balance...\n")
+
+# Define the target ratio of the minority class (Poor) to the majority class (NotPoor)
+target_ratio <- 40 / 60
+
+# Apply SMOTE using the themis package for precise ratio control
+set.seed(123) # for reproducibility
+train_smote_universal <- smote(
+  train_data_universal,
+  var = "MISKIN_KAKO", # The target variable
+  over_ratio = target_ratio
+)
+
+# --- Section 4: Visualize Class Distribution ---
+# Prepare data for plotting
+df_before <- train_data_universal %>%
+  count(MISKIN_KAKO) %>%
+  mutate(Stage = "Before SMOTE")
+
+df_after <- train_smote_universal %>%
+  count(MISKIN_KAKO) %>%
+  mutate(Stage = "After SMOTE (60:40)")
+
+df_combined_plot <- bind_rows(df_before, df_after)
+
+# Generate the bar chart
+cat("Step 4: Generating comparison plot...\n")
+ggplot(df_combined_plot, aes(x = MISKIN_KAKO, y = n, fill = Stage)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_text(aes(label = n), position = position_dodge(width = 0.9), vjust = -0.3) +
+  labs(
+    title = "Class Distribution Before and After SMOTE",
+    x = "Poverty Status",
+    y = "Number of Samples",
+    fill = "Dataset"
+  ) +
+  theme_minimal()
+```
+
+## Section 3: reusable function
+
+```{r}
+# ===================================================================
+# Final Reusable Functions for Modelling & Evaluation
+# ===================================================================
+
+# 1. Load All Required Libraries
+# -------------------------------------------------------------------
+library(caret)
+library(pROC)
+library(dplyr)
+library(ggplot2)
+library(purrr)
+library(tibble)
+library(writexl)
+library(doParallel)
+
+
+# 2. Setup Parallel Processing & Global Result Lists
+# -------------------------------------------------------------------
+# Use n-1 cores to leave one free for system processes
+num_cores <- detectCores() - 1
+if (num_cores < 1) num_cores <- 1
+registerDoParallel(cores = num_cores)
+cat("Registered", num_cores, "cores for parallel processing.\n")
+
+# Initialise global lists to store results from all models
+all_model_performance_metrics <- list()
+all_cv_accuracy_results <- list()
+all_roc_data <- list()
+all_model_parameters <- list()
+
+cat("Global result lists created.\n")
+
+
+# 3. Reusable Function Definitions
+# -------------------------------------------------------------------
+
+# --- Function 1: Train and Evaluate a Model ---
+train_and_evaluate_model <- function(
+  train_data,
+  test_data,
+  target_variable_name = "MISKIN_KAKO",
+  model_name,
+  method_caret,
+  tuneGrid = NULL,
+  ...
+) {
+  cat("\n--- Training and Evaluating", model_name, "Model ---\n")
+
+  # Control for 5-fold CV optimising ROC (AUC)
+  fitControl <- trainControl(
+    method            = "cv",
+    number            = 5,
+    savePredictions   = "final",
+    classProbs        = TRUE,
+    summaryFunction   = twoClassSummary,
+    allowParallel     = TRUE
+  )
+
+  # Ensure target variable levels are consistent
+  train_data[[target_variable_name]] <- factor(train_data[[target_variable_name]], levels = c("NotPoor", "Poor"))
+  test_data[[target_variable_name]]  <- factor(test_data[[target_variable_name]], levels = c("NotPoor", "Poor"))
+
+  # Define the model formula
+  formula_obj <- as.formula(paste(target_variable_name, "~ ."))
+
+  # Set seed and train the model
+  set.seed(456)
+  trained_model <- train(
+    formula_obj,
+    data      = train_data,
+    method    = method_caret,
+    trControl = fitControl,
+    tuneGrid  = tuneGrid,
+    metric    = "ROC",
+    ...
+  )
+  cat(model_name, "model training completed.\n")
+
+  # Extract CV accuracy for diagnostic plot
+  cv_preds <- trained_model$pred
+  if (!is.null(trained_model$bestTune)) {
+    for (param in names(trained_model$bestTune)) {
+      cv_preds <- cv_preds[cv_preds[[param]] == trained_model$bestTune[[param]], ]
+    }
+  }
+  cv_results_df <- cv_preds %>%
+    group_by(Resample) %>%
+    summarize(Accuracy = mean(pred == obs, na.rm = TRUE), .groups = "drop") %>%
+    mutate(Model = model_name)
+  all_cv_accuracy_results[[model_name]] <<- cv_results_df
+
+  # --- Test set evaluation with optimal threshold for F1-Score ---
+  test_probs <- predict(trained_model, test_data, type = "prob")[["Poor"]]
+  actuals <- test_data[[target_variable_name]]
+  roc_obj <- roc(response = actuals, predictor = test_probs, levels = c("NotPoor", "Poor"))
+
+  # Find the threshold that maximizes the F1-Score
+  coords_df <- coords(roc_obj, "all", ret = c("threshold", "precision", "recall")) %>%
+    as.data.frame() %>%
+    mutate(f1 = 2 * (precision * recall) / (precision + recall)) %>%
+    filter(is.finite(f1))
+  optimal_threshold <- slice_max(coords_df, order_by = f1, n = 1, with_ties = FALSE) %>% pull(threshold)
+  cat("Optimal threshold to maximise F1-Score:", round(optimal_threshold, 4), "\n")
+
+  # Apply the optimal threshold
+  test_preds <- factor(ifelse(test_probs >= optimal_threshold, "Poor", "NotPoor"), levels = c("NotPoor", "Poor"))
+  cm <- confusionMatrix(test_preds, actuals, positive = "Poor")
+
+  # Store final results
+  all_roc_data[[model_name]] <<- data.frame(FPR = 1 - roc_obj$specificities, TPR = roc_obj$sensitivities, Model = model_name)
+  all_model_performance_metrics[[model_name]] <<- list(
+    Accuracy = cm$overall["Accuracy"], F1_Score = cm$byClass["F1"], AUC = as.numeric(auc(roc_obj)),
+    Sensitivity = cm$byClass["Sensitivity"], Specificity = cm$byClass["Specificity"], Precision = cm$byClass["Precision"],
+    Best_Threshold = optimal_threshold
+  )
+  all_model_parameters[[model_name]] <<- if (!is.null(trained_model$bestTune)) {
+    paste(names(trained_model$bestTune), trained_model$bestTune, sep = "=", collapse = ", ")
+  } else { "—" }
+
+  cat("Evaluation for", model_name, "on test data completed.\n")
+  return(trained_model)
+}
+
+# --- Function 2: Create Summary Comparison Table ---
+create_comparison_table <- function() {
+  if (length(all_model_performance_metrics) == 0) {
+    cat("No model performance metrics available.\n"); return(NULL)
+  }
+  lapply(names(all_model_performance_metrics), function(model_name) {
+    metrics <- all_model_performance_metrics[[model_name]]
+    params  <- all_model_parameters[[model_name]]
+    data.frame(
+      Model = model_name, Accuracy = round(metrics$Accuracy, 4), F1_Score = round(metrics$F1_Score, 4),
+      AUC = round(metrics$AUC, 4), Sensitivity = round(metrics$Sensitivity, 4), Specificity = round(metrics$Specificity, 4),
+      Precision = round(metrics$Precision, 4), Best_Threshold = round(metrics$Best_Threshold, 4), Parameters = params
+    )
+  }) %>% bind_rows()
+}
+
+# --- Function 3: Plot Cross-Validation Stability Boxplot (Revised) ---
+plot_cv_stability_boxplot <- function() {
+  # Return if no CV results are available
+  if (length(all_cv_accuracy_results) == 0) {
+    cat("No CV results available to plot.\n")
+    return()
+  }
+  
+  # Bind all CV results into one data frame
+  cv_df <- bind_rows(all_cv_accuracy_results)
+
+  # Create the boxplot
+  ggplot(cv_df, aes(x = reorder(Model, Accuracy, median), y = Accuracy, fill = Model)) +
+    geom_boxplot() +
+    labs(
+      title = "Model Stability: Cross-Validation Accuracy",
+      subtitle = "Shows performance distribution during training on SMOTE data",
+      x = "Model",
+      y = "Accuracy"
+    ) +
+    theme_minimal() +
+    theme(legend.position = "none", axis.text.x = element_text(angle = 25, hjust = 1))
+}
+
+# --- Function 4: Plot All ROC Curves ---
+plot_roc_curves <- function(summary_df) {
+  if (length(all_roc_data) == 0 || is.null(summary_df)) return()
+  roc_df <- bind_rows(all_roc_data)
+  auc_labels <- summary_df %>% select(Model, AUC) %>% mutate(label = paste0(Model, " (AUC = ", AUC, ")"))
+  roc_df <- roc_df %>% left_join(auc_labels, by = "Model")
+  ggplot(roc_df, aes(x = FPR, y = TPR, colour = label)) +
+    geom_line(linewidth = 1.1) +
+    geom_abline(intercept = 0, slope = 1, linetype = "dashed", colour = "grey") +
+    labs(title = "ROC Curves for All Models on Test Set", x = "False Positive Rate", y = "True Positive Rate", colour = "Model") +
+    theme_minimal()
+}
+
+# --- Function 5: Export Summary Table to Excel ---
+export_summary_to_excel <- function(summary_df, file_path = "model_performance_summary.xlsx") {
+  if (is.null(summary_df) || nrow(summary_df) == 0) {
+    cat("Summary data is empty. Nothing to export.\n"); return()
+  }
+  write_xlsx(summary_df, path = file_path)
+  cat("\nFinal model performance summary exported to:", file_path, "\n")
+}
+```
+
+# Section 4: Modelling
+
+```{r}
+# --- Section 4: Modelling ---
+cat("\n--- Section 4: Modelling and Evaluation ---\n")
+```
+
+## 4.2 Logistic Regression
+
+```{r}
+# # --- Section 5.1: Logistic Regression on FAMD Components ---
+# 
+# # 1. Load necessary libraries
+# library(caret)
+# library(dplyr)
+# 
+# cat("\n--- Training Logistic Regression on FAMD Data ---\n")
+# 
+# # 2. Prepare Training Data
+# # Start with the SMOTE-balanced data prepared from FAMD components.
+# train_lr_famd <- train_smote_universal
+# 
+# # 3. Apply Preprocessing Filters for Consistency
+# # NOTE: These filters are unlikely to remove any of the 3 FAMD components,
+# # but we include the steps to maintain a consistent workflow.
+# 
+# # 3.1 Apply Near-Zero Variance (NZV) filter
+# nzv_cols <- nearZeroVar(train_lr_famd, saveMetrics = FALSE)
+# if (length(nzv_cols) > 0) {
+#   train_lr_famd <- train_lr_famd[, -nzv_cols]
+#   cat("Removed", length(nzv_cols), "near-zero variance predictors.\n")
+# } else {
+#   cat("No NZV predictors found.\n")
+# }
+# 
+# # 3.2 Apply Correlation filter (FAMD components should be uncorrelated)
+# numeric_vars <- select(train_lr_famd, where(is.numeric))
+# if (ncol(numeric_vars) > 1) {
+#   corr_matrix <- cor(numeric_vars)
+#   high_corr_indices <- findCorrelation(corr_matrix, cutoff = 0.9)
+#   if (length(high_corr_indices) > 0) {
+#     train_lr_famd <- train_lr_famd[, -high_corr_indices]
+#     cat("Removed", length(high_corr_indices), "highly correlated predictors.\n")
+#   } else {
+#     cat("No highly correlated predictors found.\n")
+#   }
+# }
+# 
+# # 4. Align Test Data
+# # Ensure the test set has the exact same columns as the processed training set.
+# final_lr_famd_predictors <- setdiff(names(train_lr_famd), "MISKIN_KAKO")
+# test_lr_famd <- test_data_universal %>%
+#   select(all_of(final_lr_famd_predictors), MISKIN_KAKO)
+# 
+# # 5. Train and Evaluate the Model
+# # Call our reusable function. 'glm' has no parameters to tune.
+# set.seed(123) # for reproducibility
+# model_lr_famd <- train_and_evaluate_model(
+#   train_data   = train_lr_famd,
+#   test_data    = test_lr_famd,
+#   model_name   = "Logistic Regression (FAMD)",
+#   method_caret = "glm"
+# )
+# 
+# cat("\nLogistic Regression (FAMD) model training and evaluation complete.\n")
+# 
+# # 6. Generate Updated Comparison Report
+# # This will now include the results from our new model.
+# final_summary_table <- create_comparison_table()
+# print(final_summary_table)
+# 
+# # Plot the updated final performance and diagnostic plots
+# plot_performance_barchart(final_summary_table)
+# plot_roc_curves(final_summary_table)
+# plot_cv_stability_boxplot()
+```
+
+## 4.3 Decision Tree
+
+```{r}
+# --- Section 5.2: Decision Tree on FAMD Components ---
+
+# 1. Load necessary libraries
+library(caret)
+library(dplyr)
+library(rpart)
+library(rpart.plot)
+library(ggplot2)
+
+cat("\n--- Training Decision Tree on FAMD Data ---\n")
+
+# 2. Prepare Training Data
+# Start with the SMOTE-balanced data and apply the NZV filter.
+train_dt_famd <- train_smote_universal
+
+nzv_cols <- nearZeroVar(train_dt_famd, saveMetrics = FALSE)
+if (length(nzv_cols) > 0) {
+  train_dt_famd <- train_dt_famd[, -nzv_cols]
+  cat("Removed", length(nzv_cols), "near-zero variance predictors.\n")
+} else {
+  cat("No NZV predictors found.\n")
+}
+
+# 3. Align Test Data
+# Ensure the test set has the exact same columns.
+final_dt_famd_predictors <- setdiff(names(train_dt_famd), "MISKIN_KAKO")
+test_dt_famd <- test_data_universal %>%
+  select(all_of(final_dt_famd_predictors), MISKIN_KAKO)
+
+# 4. Define Tuning Grid for Pruning
+# Specify the complexity parameter ('cp') values to test.
+dt_tune_grid <- expand.grid(cp = c(0.001, 0.005, 0.01, 0.02, 0.05))
+
+# 5. Train and Evaluate the Model
+# Call our reusable function to train and tune the model.
+set.seed(123) # for reproducibility
+model_dt_famd <- train_and_evaluate_model(
+  train_data   = train_dt_famd,
+  test_data    = test_dt_famd,
+  model_name   = "Decision Tree (FAMD)",
+  method_caret = "rpart",
+  tuneGrid     = dt_tune_grid
+)
+
+cat("\nDecision Tree (FAMD) model training and evaluation complete.\n")
+
+# 6. Model-Specific Visualisation Function
+plot_dt_famd_visuals <- function(model) {
+  # Variable Importance Plot
+  importance_df <- varImp(model, scale = TRUE)$importance %>%
+    as.data.frame() %>%
+    tibble::rownames_to_column("Variable") %>%
+    rename(Importance = Overall)
+
+  importance_plot <- ggplot(importance_df, aes(x = Importance, y = reorder(Variable, Importance))) +
+    geom_col(fill = "#2ca02c", width = 0.7) +
+    labs(title = "Variable Importance - Decision Tree (FAMD)", x = "Importance Score", y = "Variable") +
+    theme_minimal()
+  print(importance_plot)
+
+  # Decision Tree Diagram
+  cat("\n--- Plotting the final pruned decision tree ---\n")
+  rpart.plot(model$finalModel, type = 4, extra = 101, fallen.leaves = TRUE, cex = 0.8, main = "Final Pruned Decision Tree (FAMD)")
+}
+
+# 7. Generate All Visuals and Summaries
+# Create the specific plots for this model.
+plot_dt_famd_visuals(model_dt_famd)
+
+# Update the overall comparison report.
+final_summary_table <- create_comparison_table()
+print(final_summary_table)
+plot_performance_barchart(final_summary_table)
+plot_roc_curves(final_summary_table)
+plot_cv_stability_boxplot()
+```
+
+## 4.3 Random Forest
+
+```{r}
+# --- Section 5.3: Random Forest on FAMD Components ---
+
+# 1. Load necessary libraries
+library(caret)
+library(dplyr)
+library(ranger) # The 'ranger' engine for Random Forest
+library(ggplot2)
+
+cat("\n--- Training Random Forest on FAMD Data ---\n")
+
+# 2. Prepare Training Data
+# Start with the SMOTE-balanced data and apply the NZV filter.
+train_rf_famd <- train_smote_universal
+
+nzv_cols <- nearZeroVar(train_rf_famd, saveMetrics = FALSE)
+if (length(nzv_cols) > 0) {
+  train_rf_famd <- train_rf_famd[, -nzv_cols]
+  cat("Removed", length(nzv_cols), "near-zero variance predictors.\n")
+} else {
+  cat("No NZV predictors found.\n")
+}
+
+# 3. Align Test Data
+# Ensure the test set has the exact same columns.
+final_rf_famd_predictors <- setdiff(names(train_rf_famd), "MISKIN_KAKO")
+test_rf_famd <- test_data_universal %>%
+  select(all_of(final_rf_famd_predictors), MISKIN_KAKO)
+
+# 4. Define Tuning Grid
+# Since we only have 3 predictors, we'll test all possible mtry values.
+rf_tune_grid <- expand.grid(
+  mtry = 1:length(final_rf_famd_predictors),
+  min.node.size = c(1, 5, 10),
+  splitrule = "gini"
+)
+
+# 5. Train and Evaluate the Model
+# Call our reusable function to train and tune the model.
+set.seed(123) # for reproducibility
+model_rf_famd <- train_and_evaluate_model(
+  train_data   = train_rf_famd,
+  test_data    = test_rf_famd,
+  model_name   = "Random Forest (FAMD)",
+  method_caret = "ranger",
+  tuneGrid     = rf_tune_grid,
+  importance   = 'impurity' # Argument for ranger to calculate importance
+)
+
+cat("\nRandom Forest (FAMD) model training and evaluation complete.\n")
+
+# 6. Model-Specific Visualisation Function
+plot_rf_famd_visuals <- function(model) {
+  # Variable Importance Plot
+  importance_df <- varImp(model, scale = TRUE)$importance %>%
+    as.data.frame() %>%
+    tibble::rownames_to_column("Variable") %>%
+    rename(Importance = Overall)
+
+  importance_plot <- ggplot(importance_df, aes(x = Importance, y = reorder(Variable, Importance))) +
+    geom_col(fill = "#1f77b4", width = 0.7) + # Blue fill color
+    labs(title = "Variable Importance - Random Forest (FAMD)", x = "Importance Score", y = "Variable") +
+    theme_minimal()
+  print(importance_plot)
+}
+
+# 7. Generate All Visuals and Summaries
+# Create the specific plots for this model.
+plot_rf_famd_visuals(model_rf_famd)
+
+# Update the overall comparison report.
+final_summary_table <- create_comparison_table()
+print(final_summary_table)
+plot_performance_barchart(final_summary_table)
+plot_roc_curves(final_summary_table)
+plot_cv_stability_boxplot()
+```
+
+## 4.4 XGBoost
+
+```{r}
+# --- Section 5.4: XGBoost on FAMD Components ---
+
+# 1. Load necessary libraries
+library(caret)
+library(dplyr)
+library(xgboost) # The 'xgboost' engine
+library(ggplot2)
+
+cat("\n--- Training XGBoost on FAMD Data ---\n")
+
+# 2. Prepare Training Data
+# Start with the SMOTE-balanced data and apply the NZV filter.
+train_xgb_famd <- train_smote_universal
+
+nzv_cols <- nearZeroVar(train_xgb_famd, saveMetrics = FALSE)
+if (length(nzv_cols) > 0) {
+  train_xgb_famd <- train_xgb_famd[, -nzv_cols]
+  cat("Removed", length(nzv_cols), "near-zero variance predictors.\n")
+} else {
+  cat("No NZV predictors found.\n")
+}
+
+# 3. Align Test Data
+# Ensure the test set has the exact same columns.
+final_xgb_famd_predictors <- setdiff(names(train_xgb_famd), "MISKIN_KAKO")
+test_xgb_famd <- test_data_universal %>%
+  select(all_of(final_xgb_famd_predictors), MISKIN_KAKO)
+
+# 4. Define Tuning Grid
+# We will tune the number of rounds, tree depth, and learning rate.
+xgb_tune_grid <- expand.grid(
+  nrounds = c(100, 200),
+  max_depth = c(3, 6),
+  eta = c(0.1, 0.3),
+  gamma = 0,
+  colsample_bytree = 1,
+  min_child_weight = 1,
+  subsample = 1
+)
+
+# 5. Train and Evaluate the Model
+# Call our reusable function to train and tune the model.
+set.seed(123) # for reproducibility
+model_xgb_famd <- train_and_evaluate_model(
+  train_data   = train_xgb_famd,
+  test_data    = test_xgb_famd,
+  model_name   = "XGBoost (FAMD)",
+  method_caret = "xgbTree",
+  tuneGrid     = xgb_tune_grid,
+  verbose      = FALSE # Suppress XGBoost's detailed output
+)
+
+cat("\nXGBoost (FAMD) model training and evaluation complete.\n")
+
+# 6. Model-Specific Visualisation Function
+plot_xgb_famd_visuals <- function(model) {
+  # Variable Importance Plot
+  importance_df <- varImp(model, scale = TRUE)$importance %>%
+    as.data.frame() %>%
+    tibble::rownames_to_column("Variable") %>%
+    rename(Importance = Overall)
+
+  importance_plot <- ggplot(importance_df, aes(x = Importance, y = reorder(Variable, Importance))) +
+    geom_col(fill = "#d62728", width = 0.7) + # Red fill color
+    labs(title = "Variable Importance - XGBoost (FAMD)", x = "Importance Score", y = "Variable") +
+    theme_minimal()
+  print(importance_plot)
+}
+
+# 7. Generate All Visuals and Summaries
+# Create the specific plots for this model.
+plot_xgb_famd_visuals(model_xgb_famd)
+
+# Update the final comparison report with all four models.
+final_summary_table <- create_comparison_table()
+print(final_summary_table)
+plot_performance_barchart(final_summary_table)
+plot_roc_curves(final_summary_table)
+plot_cv_stability_boxplot()
+```
+
+# Section 5: Export Comparison
+
+```{r}
+# create an output directory (optional)
+output_dir <- "rds_outputs"
+if (!dir.exists(output_dir)) dir.create(output_dir)
+
+# 1. Comparison table
+comparison_tbl <- create_comparison_table()
+saveRDS(
+  comparison_tbl,
+  file = file.path(output_dir, "comparison_table_HH_prior.rds")
+)
+
+# 2. CV‐accuracy boxplot data
+cv_accuracy_df <- bind_rows(all_cv_accuracy_results) %>% 
+  filter(is.finite(Accuracy))
+saveRDS(
+  cv_accuracy_df,
+  file = file.path(output_dir, "cv_accuracy_data_HH_prior.rds")
+)
+
+# 3. ROC curve data
+roc_data_df <- bind_rows(all_roc_data)
+saveRDS(
+  roc_data_df,
+  file = file.path(output_dir, "roc_curve_data_HH_prior.rds")
+)
+
+cat("✔️  Three RDS files written to", output_dir, "\n",
+    "- comparison_table_IND_prior.rds\n",
+    "- cv_accuracy_data_IND_prior.rds\n",
+    "- roc_curve_data_IND_prior.rds\n")
+```

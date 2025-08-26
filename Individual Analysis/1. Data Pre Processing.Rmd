@@ -1,0 +1,521 @@
+---
+title: "Data Pre Processing"
+author: "Ahmad Risal"
+date: "2025-06-06"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Load the package
+
+```{r}
+library(foreign)
+library(haven)
+library(dplyr)
+library(survey)
+```
+
+# Import Dataset
+
+```{r}
+kor_ind1 <- read.dbf("72_ssn_202403_kor_ind1.dbf")
+kor_ind2 <- read.dbf("72_ssn_202403_kor_ind2.dbf")
+kor_mig <- read.dbf("72_ssn_202403_kor_mig.dbf")
+kor_rt <- read.dbf("72_ssn_202403_kor_rt.dbf")
+kp.4.1 <- read.dbf("72_ssn_202403_kp_blok41.dbf")
+kp.4.2 <- read.dbf("72_ssn_202403_kp_blok42.dbf")
+kp.4.3 <- read.dbf("72_ssn_202403_kp_blok43.dbf")
+flag_pov <- read_sav("flag miskin kako maret24_72.sav")
+```
+
+# Merge Dataset
+
+## 1. Flag Miskin and KP4.3
+
+```{r}
+# Join keys
+join_keys <- c("URUT", "WI1", "WI2", "R101", "R102")
+
+# Remove unwanted columns from kp.4.3 before joining
+kp_filtered <- kp.4.3 %>%
+  select(-any_of(c("R105", "R203", "R301", "KAPITA", "WERT", "WEIND")))
+
+# Left join: keep all rows from flag_pov
+kp.4.3.final <- left_join(flag_pov, kp_filtered, by = join_keys)
+
+# Buat desain survei dengan bobot
+design_kp <- svydesign(ids = ~1, data = kp.4.3.final, weights = ~WEIND)
+
+# Crosstab berbobot
+tab <- svytable(~ R102 + MISKIN_KAKO, design = design_kp)
+
+# Tampilkan sebagai data frame
+p0 <- as.data.frame(tab)
+print(p0)
+```
+
+## 2. kor_ind1 and kor_ind2
+
+```{r}
+common_features <- intersect(names(kor_ind1), names(kor_ind2))
+print(common_features)
+
+# Step 2: Merge using left join (keeping all rows from kor_ind1)
+merged_data_kor <- left_join(kor_ind1, kor_ind2, by = common_features)
+```
+
+## 3. data individu and flag miskin
+
+```{r}
+# join merged_data_kor and kp.4.3.final
+# data individu dengan variabel kemiskinan
+common_features <- intersect(names(merged_data_kor), names(kp.4.3.final))
+print(common_features)
+data_kor_ind <- left_join(merged_data_kor, kp.4.3.final, by = common_features)
+
+```
+
+## 4. data rumah tangga and flag miskin
+
+```{r}
+
+# -------------------
+# join merged_data_kor and kp.4.3.final
+# data rumah tangga dengan variabel kemiskinan
+common_features <- intersect(names(kor_rt), names(kp.4.3.final))
+print(common_features)
+data_kor_rt <- left_join(kor_rt, kp.4.3.final, by = common_features)
+
+```
+
+## 5. Save Backup data
+
+```{r}
+# Save backup
+#saveRDS(data_kor_ind, "backup_data_kor_ind.rds")
+#saveRDS(data_kor_rt, "backup_data_kor_rt.rds")
+
+data_kor_ind_backup <- data_kor_ind
+data_kor_rt_backup <- data_kor_rt
+
+```
+
+## 6. merge final (individu and RT)
+
+```{r}
+# Load the required package
+library(dplyr)
+
+# Step 1: Identify common features
+common_features <- intersect(names(data_kor_ind), names(data_kor_rt))
+
+# Step 2: Rename non-key columns from data_kor_rt with "_RT" suffix
+# First, exclude common keys from columns to rename
+columns_to_rename <- setdiff(names(data_kor_rt), common_features)
+
+# Create renamed data_kor_rt with suffix for non-key columns
+data_kor_rt_renamed <- data_kor_rt %>%
+  rename_with(.cols = all_of(columns_to_rename), .fn = ~ paste0(.x, "_RT"))
+
+# Step 3: Perform the left join, keeping all rows from data_kor_ind
+merged_data <- left_join(data_kor_ind, data_kor_rt_renamed, by = common_features)
+```
+
+## 7. Backup data full
+
+```{r}
+
+# save data
+#saveRDS(merged_data, "merged_data_final.rds")
+
+library(writexl)
+
+# Create a data frame with column names
+column_list <- data.frame(Column_Name = names(merged_data))
+
+# Write to Excel
+# write_xlsx(column_list, "merged_data_columns.xlsx")
+
+```
+
+# Filter used data
+
+```{r}
+# Step 1: Create a character vector of features to keep
+selected_features <- c(
+   "R102", "R105", "R301", "R404", "R405", "R407", "R607", "R608", "R609", "R610", 
+   "R612", "R614", "R615", "R616", "R701", "R702", "R705", "R706", "R707", 
+   "R708", "R709", "R801", "R802", "R807_A", "R807_B", "R807_C", "R807_X", 
+   "R808", "R1010", "R1101_A", "R1101_B", "R1101_C", "R1101_D", "R1101_E", 
+   "R1101_X", "R1102", "R1201", "R1206", "R1207", "R1208", "R1209", "R1802_RT", 
+   "R1804_RT", "R1805_RT", "R1806A_RT", "R1807_RT", "R1808_RT", "R1809A_RT", 
+   "R1810A_RT", "R1811A_RT", "R1812_RT", "R1813A_RT", "R1813B_RT", "R1813C_RT", 
+   "R1813D_RT", "R1813E_RT", "R1814A_RT", "R1815A_RT", "R1816_RT", "R1817_RT", 
+   "R1901A_RT", "R1901B_RT", "R1901C_RT", "R1901D_RT", "R1901E_RT", "R1901F_RT", 
+   "R1901G_RT", "R1901H_RT", "R1901I_RT", "R1901J_RT", "R1901K_RT", "R2001A_RT", 
+   "R2001B_RT", "R2001C_RT", "R2001D_RT", "R2001E_RT", "R2001F_RT", "R2001G_RT", 
+   "R2001H_RT", "R2001I_RT", "R2001J_RT", "R2001K_RT", "R2001L_RT", "R2001M_RT", 
+   "R2201A2_RT", "R2201B2_RT", "R2201C2_RT", "R2201E2_RT", "R2201F2_RT", "R2202_RT", 
+   "R2203_RT", "R2204A_RT", "R2209A_RT", "R2209B_RT", "R2209C_RT", "R2209D_RT", "MISKIN_KAKO"
+)
+
+
+# Step 2: Select only those features
+filtered_data <- merged_data %>% select(any_of(selected_features))
+```
+
+## Check NA
+
+```{r}
+# Count number of NAs in each column
+na_counts <- sapply(filtered_data, function(x) sum(is.na(x)))
+
+# Filter only columns that have at least one NA
+na_table <- data.frame(
+  Column_Name = names(na_counts)[na_counts > 0],
+  Number_of_NA = na_counts[na_counts > 0],
+  row.names = NULL
+)
+
+# View the result
+print(na_table)
+```
+
+# encode new variable
+
+```{r}
+library(dplyr)
+
+# Step 1: Create R807 variable
+filtered_data <- filtered_data %>%
+  mutate(
+    R807 = if_else(
+      !is.na(R807_A) | !is.na(R807_B) | !is.na(R807_C),
+      1L, 5L
+    ),
+    
+    # Step 2: Create R1101 variable
+    R1101 = if_else(
+      !is.na(R1101_A) | !is.na(R1101_B) | !is.na(R1101_C) |
+        !is.na(R1101_D) | !is.na(R1101_E),
+      1L, 5L
+    )
+  )
+
+# Step 3: Drop the 16 original variables with high NA
+cols_to_remove <- c(
+  "R807_A", "R807_B", "R807_C", "R807_X",
+  "R1101_A", "R1101_B", "R1101_C", "R1101_D", "R1101_E", "R1101_X"
+)
+
+filtered_data <- filtered_data %>% select(-all_of(cols_to_remove))
+```
+
+# Reorder the columns
+
+```{r}
+# Step 1: Exclude MISKIN_KAKO from ordering
+colnames_excl <- setdiff(names(filtered_data), "MISKIN_KAKO")
+
+# Step 2: Order by length, then alphabetically
+ordered_cols <- colnames_excl[order(nchar(colnames_excl), colnames_excl)]
+
+# Step 3: Add MISKIN_KAKO at the end
+final_order <- c(ordered_cols, "MISKIN_KAKO")
+
+# Step 4: Reorder the data frame
+filtered_data <- filtered_data[, final_order]
+```
+
+# set variables to numeric and categoric
+
+```{r}
+# Define variables to keep as numeric
+keep_numeric <- c(
+  "R301", "R407", 
+  "R708", "R709", 
+  "R1208", "R1804_RT"
+)
+
+# Convert all other columns to factor
+filtered_data[] <- lapply(names(filtered_data), function(col) {
+  if (col %in% keep_numeric) {
+    return(filtered_data[[col]])
+  } else {
+    return(as.factor(filtered_data[[col]]))
+  }
+})
+
+# Optional: make sure column names are preserved
+names(filtered_data) <- names(filtered_data)
+
+str(filtered_data)
+```
+
+```{r}
+# Table for categorical variable R607
+table_R607 <- table(filtered_data$R607)
+print(table_R607)
+
+# Table for numerical variable R407 with condition <= 5 and > 5
+table_R407 <- table(
+  R407_less_equal_4 = filtered_data$R407 <= 4,
+  useNA = "ifany"
+)
+
+# Rename logical to meaningful labels
+names(table_R407) <- c("R407 > 5", "R407 <= 4")
+print(table_R407)
+```
+
+# Save Backup Data
+
+```{r}
+
+
+# save data
+# saveRDS(filtered_data, "filtered_data.rds")
+```
+
+# Check Descriptive Statistics
+
+```{r}
+# Frequency table
+tab <- table(filtered_data$MISKIN_KAKO)
+
+# Percentage
+percent <- prop.table(tab) * 100
+
+# Combine into a single table
+miskin_table <- data.frame(
+  MISKIN_KAKO = names(tab),
+  Frequency = as.vector(tab),
+  Percentage = round(as.vector(percent), 2)
+)
+
+# Show the result
+print(miskin_table)
+```
+
+# Make new Dataframe that will be used in analysis
+
+```{r}
+data_susenas <- filtered_data
+```
+
+# Make it Neat/factor/encoding
+
+## Var 612 pendidikan yang sedang diikuti
+
+```{r}
+library(dplyr)
+
+# Pastikan data dalam format karakter dulu
+data_susenas$R612 <- as.character(data_susenas$R612)
+
+# Lakukan recoding
+data_susenas$R612_recode <- case_when(
+  data_susenas$R612 == "0"                                  ~ "Tidak Ditanyakan",
+  data_susenas$R612 %in% c("1", "2", "3", "4", "5")          ~ "Setara SD",
+  data_susenas$R612 %in% c("6", "7", "8", "9", "10")         ~ "Setara SMP",
+  data_susenas$R612 %in% c("11", "12", "13", "14", "15", "16", "17") ~ "Setara SMA",
+  data_susenas$R612 == "18"                                  ~ "D1/D2",
+  data_susenas$R612 == "19"                                  ~ "D3",
+  data_susenas$R612 %in% c("20", "21")                       ~ "D4/S1",
+  data_susenas$R612 == "22"                                  ~ "Profesi",
+  data_susenas$R612 == "23"                                  ~ "S2",
+  data_susenas$R612 == "24"                                  ~ "S3",
+  TRUE                                               ~ NA_character_
+)
+
+# Konversi ke factor dan urutkan level
+data_susenas$R612_recode <- factor(data_susenas$R612_recode,
+                           levels = c("Tidak Ditanyakan", "Setara SD", "Setara SMP", "Setara SMA",
+                                      "D1/D2", "D3", "D4/S1", "Profesi", "S2", "S3"))
+
+data_susenas$R612 <- data_susenas$R612_recode
+data_susenas$R612_recode <- NULL
+```
+
+## Var 614 STTB Tertinggi
+
+```{r}
+library(dplyr)
+
+data_susenas <- data_susenas %>%
+  mutate(
+    R614 = as.character(R614),
+    R614_recode = case_when(
+      R614 == "0"                                   ~ "Tidak Ditanyakan",
+      R614 == "25"                                  ~ "Tidak Punya Ijazah SD",
+      R614 %in% c("1", "2", "3", "4", "5")           ~ "Setara SD",
+      R614 %in% c("6", "7", "8", "9", "10")          ~ "Setara SMP",
+      R614 %in% c("11", "12", "13", "14", "15", "16", "17") ~ "Setara SMA",
+      R614 == "18"                                   ~ "D1/D2",
+      R614 == "19"                                   ~ "D3",
+      R614 %in% c("20", "21")                        ~ "D4/S1",
+      R614 == "22"                                   ~ "Profesi",
+      R614 == "23"                                   ~ "S2",
+      R614 == "24"                                   ~ "S3",
+      TRUE                                           ~ NA_character_
+    ),
+    R614_recode = factor(R614_recode, levels = c(
+      "Tidak Ditanyakan", "Tidak Punya Ijazah SD", "Setara SD", "Setara SMP", "Setara SMA",
+      "D1/D2", "D3", "D4/S1", "Profesi", "S2", "S3"
+    ))
+  )
+
+
+data_susenas$R614 <- data_susenas$R614_recode
+data_susenas$R614_recode <- NULL
+```
+
+## Mapping remaining factor variable
+
+```{r}
+library(readxl)
+
+metadata_label <- read_excel("fix metadata for recode.xlsx")
+
+metadata_label <- metadata_label %>%
+  mutate(Code = as.character(Code))
+```
+
+\
+
+### **Apply mapping to each variable using a loop**
+
+```{r}
+library(dplyr)
+
+# Loop over unique variables
+for (var in unique(metadata_label$Variable)) {
+  if (var %in% names(data_susenas)) {
+    
+    # Get the mapping for this variable
+    map_df <- metadata_label %>%
+      filter(Variable == var) %>%
+      select(Code, Label)
+    
+    # Convert column to character (just in case it's numeric or factor)
+    data_susenas[[var]] <- as.character(data_susenas[[var]])
+    
+    # Named vector for recoding
+    code_map <- setNames(map_df$Label, map_df$Code)
+    
+    # Apply recoding
+    data_susenas[[var]] <- code_map[data_susenas[[var]]]
+    
+    # Optionally convert to factor
+    data_susenas[[var]] <- factor(data_susenas[[var]], levels = unique(map_df$Label))
+  }
+}
+```
+
+### R2202 AND R2203
+
+```{r}
+# Recode dan ubah menjadi factor
+data_susenas$R2202_RT <- factor(
+  dplyr::case_when(
+    data_susenas$R2202_RT == 1 ~ "Ya, dapat menunjukkan kartu",
+    data_susenas$R2202_RT == 2 ~ "Ya, tidak dapat menunjukkan kartu",
+    data_susenas$R2202_RT == 5 ~ "Tidak",
+    TRUE                       ~ NA_character_
+  ),
+  levels = c("Ya, dapat menunjukkan kartu", "Ya, tidak dapat menunjukkan kartu", "Tidak")
+)
+
+data_susenas$R2203_RT <- factor(
+  dplyr::case_when(
+    data_susenas$R2203_RT == 1 ~ "Ya",
+    data_susenas$R2203_RT == 5 ~ "Tidak",
+    TRUE                       ~ NA_character_
+  ),
+  levels = c("Ya", "Tidak")
+)
+```
+
+### Others
+
+```{r}
+library(dplyr)
+
+# First ensure it's character (so you can modify values)
+data_susenas$R2204A_RT <- as.character(data_susenas$R2204A_RT)
+
+# Replace "0" with "5"
+data_susenas$R2204A_RT[data_susenas$R2204A_RT == "0"] <- "5"
+
+# Apply recoding
+data_susenas$R2204A_RT <- dplyr::case_when(
+  data_susenas$R2204A_RT == "1" ~ "Ya",
+  data_susenas$R2204A_RT == "5" ~ "Tidak",
+  data_susenas$R2204A_RT == "8" ~ "Tidak Tahu",
+  TRUE                         ~ NA_character_
+)
+
+# Convert to factor with ordered levels
+data_susenas$R2204A_RT <- factor(data_susenas$R2204A_RT,
+                                levels = c("Ya", "Tidak", "Tidak Tahu"))
+
+
+# Daftar variabel dengan nilai 1 = Ya, 5 = Tidak
+yes_no_vars <- c(
+  "R1101", "R2209A_RT", "R2209B_RT", "R2209C_RT", "R2209D_RT",
+  "R2201A2_RT", 
+  "R2201B2_RT", 
+  "R2201C2_RT", 
+  "R2201E2_RT", 
+  "R2201F2_RT"
+)
+
+# Loop untuk recoding yang hanya punya "Ya" dan "Tidak"
+for (var in yes_no_vars) {
+  data_susenas[[var]] <- factor(
+    case_when(
+      data_susenas[[var]] == 1 ~ "Ya",
+      data_susenas[[var]] == 5 ~ "Tidak",
+      TRUE                     ~ NA_character_
+    ),
+    levels = c("Ya", "Tidak")
+  )
+}
+```
+
+### check any missing value
+
+```{r}
+anyNA(data_susenas)
+```
+
+```{r}
+# Frequency table
+tab <- table(data_susenas$MISKIN_KAKO)
+
+# Percentage
+percent <- prop.table(tab) * 100
+
+# Combine into a single table
+miskin_table <- data.frame(
+  MISKIN_KAKO = names(tab),
+  Frequency = as.vector(tab),
+  Percentage = round(as.vector(percent), 2)
+)
+
+# Show the result
+print(miskin_table)
+```
+
+# make data susenas backup
+
+```{r}
+data_susenas_backup <- data_susenas
+```
+
+```{r}
+# saveRDS(data_susenas, file = "data_susenas.rds")
+```
