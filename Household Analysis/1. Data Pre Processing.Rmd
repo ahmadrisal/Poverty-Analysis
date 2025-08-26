@@ -44,13 +44,13 @@ kp_filtered <- kp.4.3 %>%
 # Left join: keep all rows from flag_pov
 kp.4.3.final <- left_join(flag_pov, kp_filtered, by = join_keys)
 
-# Buat desain survei dengan bobot
+# survey design
 design_kp <- svydesign(ids = ~1, data = kp.4.3.final, weights = ~WEIND)
 
 # Crosstab berbobot
 tab <- svytable(~ R102 + MISKIN_KAKO, design = design_kp)
 
-# Tampilkan sebagai data frame
+# show as dataframe
 p0 <- as.data.frame(tab)
 print(p0)
 ```
