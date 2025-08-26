@@ -65,24 +65,21 @@ print(common_features)
 merged_data_kor <- left_join(kor_ind1, kor_ind2, by = common_features)
 ```
 
-## 3. data individu and flag miskin
+## 3. Individual data and flag miskin
 
 ```{r}
 # join merged_data_kor and kp.4.3.final
-# data individu dengan variabel kemiskinan
 common_features <- intersect(names(merged_data_kor), names(kp.4.3.final))
 print(common_features)
 data_kor_ind <- left_join(merged_data_kor, kp.4.3.final, by = common_features)
 
 ```
 
-## 4. data rumah tangga and flag miskin
+## 4. Household dataset and flag miskin
 
 ```{r}
-
 # -------------------
 # join merged_data_kor and kp.4.3.final
-# data rumah tangga dengan variabel kemiskinan
 common_features <- intersect(names(kor_rt), names(kp.4.3.final))
 print(common_features)
 data_kor_rt <- left_join(kor_rt, kp.4.3.final, by = common_features)
@@ -98,7 +95,6 @@ data_kor_rt <- left_join(kor_rt, kp.4.3.final, by = common_features)
 
 data_kor_ind_backup <- data_kor_ind
 data_kor_rt_backup <- data_kor_rt
-
 ```
 
 ## 6. Pooling individual data to household data
@@ -153,8 +149,6 @@ data_kor_rt <- data_kor_rt %>%
 ```
 
 ```{r}
-# This code should be run AFTER your existing code block
-
 data_kor_rt <- data_kor_rt %>%
   mutate(
     # 1. Convert sex_head from numeric (1, 2) to a descriptive factor
@@ -193,10 +187,7 @@ data_kor_rt <- data_kor_rt %>%
 ```
 
 ```{r}
-# This code should be run AFTER your existing code block
-
 # Define the levels and labels for marital status for clarity
-# PLEASE VERIFY these labels match the codes in your data dictionary
 marital_levels <- c(1, 2, 3, 4)
 marital_labels <- c("Single/Unmarried", "Married", "Divorced", "Widowed")
 
@@ -276,8 +267,6 @@ data_kor_rt <- data_kor_rt %>%
 ```
 
 ```{r}
-# This code should be run AFTER your existing code block
-
 data_kor_rt <- data_kor_rt %>%
   mutate(
     # 1. Create a detailed, three-level factor for school attendance status
@@ -301,7 +290,7 @@ data_kor_rt <- data_kor_rt %>%
   )
 ```
 
-### 6.6 Sekolah yang pernah/sedang diikuti (even though not finished) (cek)
+### 6.6 Schools and Colleges Attended (even though not finished)
 
 ```{r}
 library(dplyr)
@@ -335,7 +324,7 @@ map_eduyears <- function(x) {
   )
 }
 
-# 3. Tambahkan variabel bantu ke data_kor_ind
+# 3. Create a support variable for data_kor_ind
 data_kor_ind <- data_kor_ind %>%
   mutate(
     edu_group = recode_edulevel(R612),
@@ -346,7 +335,7 @@ data_kor_ind <- data_kor_ind %>%
     secondary_adult = if_else(R407 >= 15 & R612 >= 6, 1, 0)
   )
 
-# 4. Buat pooled_summary terlebih dahulu
+# 4. Create the pooled_summary first
 pooled_summary <- data_kor_ind %>%
   group_by(URUT) %>%
   summarise(
@@ -366,13 +355,13 @@ pooled_summary <- data_kor_ind %>%
     edu_head_group = recode_edulevel(edu_head)
   )
 
-# 5. Lakukan LEFT JOIN agar pooled variabel ditambahkan di akhir
+# 5. Perform a LEFT JOIN so that the pooled variable is added at the end
 data_kor_rt <- data_kor_rt %>%
   left_join(pooled_summary, by = "URUT")
 ```
 
 ```{r}
-# Daftar variabel hasil pooling (bisa sesuaikan jika perlu)
+# List of pooled variables
 pooled_vars <- c(
   "edu_highest_level", "edu_lowest_level", "edu_head",
   "n_never_school", "n_smp_plus", "prop_adult_smp_plus",
@@ -380,7 +369,7 @@ pooled_vars <- c(
   "edu_highest_group", "edu_lowest_group", "edu_head_group"
 )
 
-# Hitung jumlah dan persentase NA
+# Calculate the count and percentage of NAs.
 na_summary <- sapply(data_kor_rt[pooled_vars], function(x) {
   c(
     total_na = sum(is.na(x)),
@@ -390,7 +379,7 @@ na_summary <- sapply(data_kor_rt[pooled_vars], function(x) {
   t() %>%
   as.data.frame()
 
-# Tampilkan dengan pembulatan 2 digit
+# Display with 2-digit rounding
 na_summary <- round(na_summary, 2)
 na_summary
 ```
@@ -407,7 +396,7 @@ data_kor_rt <- data_kor_rt %>%
 ```
 
 ```{r}
-# Daftar variabel hasil pooling (bisa sesuaikan jika perlu)
+# List of pooled variables 
 pooled_vars <- c(
   "edu_highest_level", "edu_lowest_level", "edu_head",
   "n_never_school", "n_smp_plus", "prop_adult_smp_plus",
@@ -415,7 +404,7 @@ pooled_vars <- c(
   "edu_highest_group", "edu_lowest_group", "edu_head_group"
 )
 
-# Hitung jumlah dan persentase NA
+# Calculate the count and percentage of NAs
 na_summary <- sapply(data_kor_rt[pooled_vars], function(x) {
   c(
     total_na = sum(is.na(x)),
@@ -425,12 +414,12 @@ na_summary <- sapply(data_kor_rt[pooled_vars], function(x) {
   t() %>%
   as.data.frame()
 
-# Tampilkan dengan pembulatan 2 digit
+# Display with 2-digit rounding
 na_summary <- round(na_summary, 2)
 na_summary
 ```
 
-### 6.7 Ijazah tertinggi yang dimiliki
+### 6.7 Highest qualification held
 
 ```{r}
 library(dplyr)
@@ -449,7 +438,7 @@ recode_certificate <- function(x) {
   )
 }
 
-# 2. Tambahkan variabel bantu ke data_kor_ind
+# 2. Add a helper variable to data_kor_ind
 data_kor_ind <- data_kor_ind %>%
   mutate(
     cert_group = recode_certificate(R614),
@@ -460,7 +449,7 @@ data_kor_ind <- data_kor_ind %>%
     tertiary = if_else(R614 >= 20 & R614 <= 24, 1, 0)          # D4/S1 ke atas
   )
 
-# 3. Pooling ke level rumah tangga
+# 3. Pooling to the household level.
 cert_summary <- data_kor_ind %>%
   group_by(URUT) %>%
   summarise(
@@ -476,18 +465,18 @@ cert_summary <- data_kor_ind %>%
     highest_cert_group = recode_certificate(highest_cert_level)
   )
 
-# 4. Gabungkan hasil pooled ke data_kor_rt dan tangani NA
+# 4. Merge the pooled results into data_kor_rt and handle the NAs.
 data_kor_rt <- data_kor_rt %>%
   left_join(cert_summary, by = "URUT") %>%
   mutate(
-    # Tangani NA dengan nilai default yang logis
+    # Handle the NAs with a logical default value
     highest_cert_group = if_else(is.na(highest_cert_group), "Tidak/Belum pernah bersekolah", highest_cert_group),
     prop_primary_plus = if_else(is.na(prop_primary_plus), 0, prop_primary_plus),
     prop_secondary_plus = if_else(is.na(prop_secondary_plus), 0, prop_secondary_plus),
     n_sma_or_higher = if_else(is.na(n_sma_or_higher), 0, n_sma_or_higher),
     has_tertiary = if_else(is.na(has_tertiary), 0, has_tertiary),
 
-    # Konversi has_tertiary menjadi faktor dengan label
+    # Convert has_tertiary into a factor with labels
     has_tertiary = factor(
       has_tertiary,
       levels = c(0, 1),
@@ -497,7 +486,7 @@ data_kor_rt <- data_kor_rt %>%
 ```
 
 ```{r}
-# Daftar variabel hasil pooling dari R614
+# List of pooled variables from R614.
 cert_vars <- c(
   "n_no_cert",
   "highest_cert_level",
@@ -508,7 +497,7 @@ cert_vars <- c(
   "has_tertiary"
 )
 
-# Hitung jumlah dan persentase NA
+# Calculate the count and percentage of NAs
 na_cert_summary <- sapply(data_kor_rt[cert_vars], function(x) {
   c(
     total_na = sum(is.na(x)),
@@ -518,7 +507,7 @@ na_cert_summary <- sapply(data_kor_rt[cert_vars], function(x) {
   t() %>%
   as.data.frame()
 
-# Tampilkan ringkasan dengan pembulatan rapi
+# Display the summary with neat rounding.
 na_cert_summary <- round(na_cert_summary, 2)
 na_cert_summary
 ```
@@ -592,8 +581,6 @@ data_kor_rt <- data_kor_rt %>%
 ```{r}
 library(dplyr)
 
-# --- This is the complete, corrected workflow ---
-
 # 1. Start with the individual-level data to define flags
 data_kor_ind <- data_kor_ind %>%
   mutate(
@@ -602,7 +589,6 @@ data_kor_ind <- data_kor_ind %>%
   )
 
 # 2. Create the household-level summary dataframe.
-#    We will explicitly check the names of this dataframe right after creating it.
 rekening_pooled <- data_kor_ind %>%
   group_by(URUT) %>%
   summarise(
@@ -613,9 +599,6 @@ rekening_pooled <- data_kor_ind %>%
     head_with_saving = as.integer(any(R403 == 1 & is_saving, na.rm = TRUE))
   )
 
-# 3. (Optional but recommended) Verify that 'rekening_pooled' was created correctly
-#    Run this line and check the output for 'has_saving', 'all_adults_with_saving', etc.
-# print(names(rekening_pooled))
 
 # 4. Join the summary data to the main household data AND create the factors
 data_kor_rt <- data_kor_rt %>%
@@ -637,15 +620,12 @@ data_kor_rt <- data_kor_rt %>%
                                 labels = c("Head does not have savings", "Head has savings"))
   )
 
-
-# --- Now you can safely check the results ---
-# This will now work without error.
 table(data_kor_rt$has_saving_factor)
 table(data_kor_rt$all_adults_saving_factor)
 table(data_kor_rt$head_saving_factor)
 ```
 
-### 6.11 **Menggunakan produk/layanan jasa keuangan**
+### 6.11 Using financial products and services
 
 ```{r}
 library(dplyr)
@@ -682,8 +662,6 @@ data_kor_rt <- data_kor_rt %>%
   )
 
 
-# --- Now you can safely check the results ---
-# This will now work without error.
 table(data_kor_rt$any_fin_service_factor)
 table(data_kor_rt$head_fin_service_factor)
 ```
@@ -692,8 +670,6 @@ table(data_kor_rt$head_fin_service_factor)
 
 ```{r}
 library(dplyr)
-
-# --- This is the complete, combined workflow ---
 
 # 1. Create a comprehensive household summary in one step
 activity_pooled <- data_kor_ind %>%
@@ -861,8 +837,6 @@ data_kor_rt <- data_kor_rt %>%
 ```{r}
 library(dplyr)
 
-# --- This is the complete, corrected workflow ---
-
 # 1. Start with the individual-level data to define the necessary flags
 data_kor_ind <- data_kor_ind %>%
   mutate(
@@ -909,8 +883,6 @@ data_kor_rt <- data_kor_rt %>%
 
 ```{r}
 library(dplyr)
-
-# --- This is the complete, corrected workflow ---
 
 # 1. Start with the individual-level data to define the necessary flags
 data_kor_ind <- data_kor_ind %>%
@@ -997,8 +969,6 @@ data_kor_rt <- data_kor_rt %>%
 ```{r}
 library(dplyr)
 
-# --- This is the complete, corrected workflow ---
-
 # 1. Start with the individual-level data to define the flag
 data_kor_ind <- data_kor_ind %>%
   mutate(
@@ -1045,8 +1015,6 @@ table(data_kor_rt$head_ecig_user_factor)
 
 ```{r}
 library(dplyr)
-
-# --- This is the complete, corrected workflow ---
 
 # 1. Start with the individual-level data to define the necessary flags
 data_kor_ind <- data_kor_ind %>%
@@ -1132,8 +1100,6 @@ data_kor_rt <- data_kor_rt %>%
 
 ```{r}
 library(dplyr)
-
-# --- This is the complete, corrected workflow ---
 
 # 1. Start with the individual-level data to define the flag
 data_kor_ind <- data_kor_ind %>%
@@ -1258,7 +1224,6 @@ filtered_data <- data_kor_rt %>%
 library(dplyr)
 
 # Define the desired order of the categories for the ordinal variable.
-# You can rearrange this vector to change the factor's order.
 ownership_level_order <- c("Owned", "Rented", "Rent-free", "Official residence", "Other")
 
 # --- Mutate the column into an ordered factor ---
@@ -1290,8 +1255,6 @@ ownership_tabulation <- filtered_data %>%
 # The table will be sorted according to the 'ownership_level_order' vector.
 print(ownership_tabulation)
 
-# You can also verify the structure of the new column
-# str(filtered_data$R1802_factor)
 ```
 
 ## R1805
@@ -1324,8 +1287,6 @@ other_property_tabulation <- filtered_data %>%
 # The table will be sorted according to the 'levels' vector ("Yes", then "No").
 print(other_property_tabulation)
 
-# You can also check the structure of the new column to confirm it's a factor
-# str(filtered_data$R1805_factor)
 ```
 
 ## R1806A
@@ -1370,14 +1331,11 @@ roofing_material_tabulation <- filtered_data %>%
 # --- Print the result to the console ---
 print(roofing_material_tabulation)
 
-# You can also check the structure of the new column
-# str(filtered_data$R1806A_factor)
 ```
 
 ## R1807
 
 ```{r}
-# Load the dplyr library (if not already loaded)
 library(dplyr)
 
 # --- Mutate the R1807 column into a factor ---
@@ -1407,21 +1365,18 @@ filtered_data <- filtered_data %>%
     )
   )
 
-# --- Now, create the frequency table for the new factor ---
+# --- create the frequency table for the new factor ---
 wall_material_tabulation <- filtered_data %>%
   count(R1807_factor)
 
 # --- Print the result to the console ---
 print(wall_material_tabulation)
 
-# You can also check the structure of the new column
-# str(filtered_data$R1807_factor)
 ```
 
 ## R1808
 
 ```{r}
-# Load the dplyr library (if not already loaded)
 library(dplyr)
 
 # --- Mutate the R1808 column into a factor ---
@@ -1462,14 +1417,11 @@ flooring_material_tabulation <- filtered_data %>%
 # --- Print the result to the console ---
 print(flooring_material_tabulation)
 
-# You can also check the structure of the new column
-# str(filtered_data$R1808_factor)
 ```
 
 ## R1809A
 
 ```{r}
-# Load the dplyr library (if not already loaded)
 library(dplyr)
 
 # Define the desired order of the categories for the ordinal variable.
@@ -1511,14 +1463,11 @@ toilet_facility_tabulation <- filtered_data %>%
 # --- Print the result to the console ---
 print(toilet_facility_tabulation)
 
-# You can also check the structure of the new column to confirm it's an ordered factor
-# str(filtered_data$R1809A_factor)
 ```
 
 ## R1810A, R1811A, R1812, R1813A, R1813B, R1813C
 
 ```{r}
-# Load the dplyr library (if not already loaded)
 library(dplyr)
 
 # Define level orders for ordinal variables first for clarity
@@ -1859,7 +1808,6 @@ print(tabulation_R1901K)
 ## R2001A - R2001M
 
 ```{r}
-# Load the dplyr library (if not already loaded)
 library(dplyr)
 
 # --- Process all 'Household Asset' variables (R2001A to R2001M) ---
@@ -1963,7 +1911,6 @@ print(tabulation_R2001M)
 ## R2201A2 - R2201F2 (exclude D2)
 
 ```{r}
-# Load the dplyr library (if not already loaded)
 library(dplyr)
 
 # --- Process Social Security/Guarantee variables ---
@@ -2011,7 +1958,6 @@ print(tabulation_R2201F2)
 ## 
 
 ```{r}
-# Load the dplyr library (if not already loaded)
 library(dplyr)
 
 # --- Process all social assistance variables in a single pipeline ---
@@ -2157,7 +2103,7 @@ selected_features <- c(
   "avg_cigs_per_smoker", "max_cigs_per_member", "head_cigs_week",
   "n_ever_smoked", "head_ever_smoked_factor",
 
-  # Target variable (if needed)
+  # Target variable
   "MISKIN_KAKO"
 )
 ```
