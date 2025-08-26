@@ -1,0 +1,2202 @@
+---
+title: "Data Pre Processing"
+author: "Ahmad Risal"
+date: "2025-06-06"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Load the package
+
+```{r}
+library(foreign)
+library(haven)
+library(dplyr)
+library(survey)
+```
+
+# Import Dataset
+
+```{r}
+kor_ind1 <- read.dbf("72_ssn_202403_kor_ind1.dbf")
+kor_ind2 <- read.dbf("72_ssn_202403_kor_ind2.dbf")
+kor_mig <- read.dbf("72_ssn_202403_kor_mig.dbf")
+kor_rt <- read.dbf("72_ssn_202403_kor_rt.dbf")
+kp.4.3 <- read.dbf("72_ssn_202403_kp_blok43.dbf")
+flag_pov <- read_sav("flag miskin kako maret24_72.sav")
+```
+
+# Merge Dataset
+
+## 1. Flag Miskin and KP4.3
+
+```{r}
+# Join keys
+join_keys <- c("URUT", "WI1", "WI2", "R101", "R102")
+
+# Remove unwanted columns from kp.4.3 before joining
+kp_filtered <- kp.4.3 %>%
+  select(-any_of(c("R105", "R203", "R301", "KAPITA", "WERT", "WEIND")))
+
+# Left join: keep all rows from flag_pov
+kp.4.3.final <- left_join(flag_pov, kp_filtered, by = join_keys)
+
+# Buat desain survei dengan bobot
+design_kp <- svydesign(ids = ~1, data = kp.4.3.final, weights = ~WEIND)
+
+# Crosstab berbobot
+tab <- svytable(~ R102 + MISKIN_KAKO, design = design_kp)
+
+# Tampilkan sebagai data frame
+p0 <- as.data.frame(tab)
+print(p0)
+```
+
+## 2. kor_ind1 and kor_ind2
+
+```{r}
+common_features <- intersect(names(kor_ind1), names(kor_ind2))
+print(common_features)
+
+# Step 2: Merge using left join (keeping all rows from kor_ind1)
+merged_data_kor <- left_join(kor_ind1, kor_ind2, by = common_features)
+```
+
+## 3. data individu and flag miskin
+
+```{r}
+# join merged_data_kor and kp.4.3.final
+# data individu dengan variabel kemiskinan
+common_features <- intersect(names(merged_data_kor), names(kp.4.3.final))
+print(common_features)
+data_kor_ind <- left_join(merged_data_kor, kp.4.3.final, by = common_features)
+
+```
+
+## 4. data rumah tangga and flag miskin
+
+```{r}
+
+# -------------------
+# join merged_data_kor and kp.4.3.final
+# data rumah tangga dengan variabel kemiskinan
+common_features <- intersect(names(kor_rt), names(kp.4.3.final))
+print(common_features)
+data_kor_rt <- left_join(kor_rt, kp.4.3.final, by = common_features)
+
+```
+
+## 5. Save Backup data
+
+```{r}
+# Save backup
+#saveRDS(data_kor_ind, "backup_data_kor_ind.rds")
+#saveRDS(data_kor_rt, "backup_data_kor_rt.rds")
+
+data_kor_ind_backup <- data_kor_ind
+data_kor_rt_backup <- data_kor_rt
+
+```
+
+## 6. Pooling individual data to household data
+
+### 6.1 Age Variable
+
+```{r}
+# Load the required package
+library(dplyr)
+
+# Pooling the age variable
+age_pooled <- data_kor_ind %>%
+  group_by(URUT) %>%
+  summarise(
+    head_age = R407[R403 == 1][1],                                # Age of household head
+    youngest_age = min(R407, na.rm = TRUE),                       # Youngest member
+    oldest_age = max(R407, na.rm = TRUE),                         # Oldest member
+    age_gap = oldest_age - youngest_age,                          # Age gap
+    n_children_lt15 = sum(R407 < 15, na.rm = TRUE),               # Children < 15
+    n_children_lt18 = sum(R407 < 18, na.rm = TRUE),               # Children < 18
+    n_elderly_60 = sum(R407 >= 60, na.rm = TRUE),                 # Elderly >= 60
+    n_elderly_65 = sum(R407 >= 65, na.rm = TRUE),                 # Elderly >= 65
+    avg_age = mean(R407, na.rm = TRUE),                           # Average age
+    n_working_age = sum(R407 >= 15 & R407 <= 64, na.rm = TRUE),   # Working-age count
+    prop_working_age = n_working_age / n()                        # Proportion working-age
+  )
+
+# Merge with household dataset
+data_kor_rt <- data_kor_rt %>%
+  left_join(age_pooled, by = "URUT")
+```
+
+### 6.2 Gender R405
+
+```{r}
+library(dplyr)
+
+# Pooling gender features
+gender_pooled <- data_kor_ind %>%
+  group_by(URUT) %>%
+  summarise(
+    sex_head = R405[R403 == 1][1],               # Sex of household head (1=Male, 2=Female)
+    n_female = sum(R405 == 2, na.rm = TRUE),     # Number of females
+    n_male = sum(R405 == 1, na.rm = TRUE),       # Number of males
+    female_head = as.integer(sex_head == 2),     # Female-headed household flag
+    prop_female = n_female / n()                 # Proportion of females in household
+  )
+
+# Merge with household dataset
+data_kor_rt <- data_kor_rt %>%
+  left_join(gender_pooled, by = "URUT")
+```
+
+```{r}
+# This code should be run AFTER your existing code block
+
+data_kor_rt <- data_kor_rt %>%
+  mutate(
+    # 1. Convert sex_head from numeric (1, 2) to a descriptive factor
+    sex_head_factor = factor(sex_head,
+                             levels = c(1, 2),
+                             labels = c("Male", "Female")),
+
+    # 2. Convert the female_head flag (0, 1) to a descriptive factor
+    female_head_factor = factor(female_head,
+                                levels = c(0, 1),
+                                labels = c("Male-headed household", "Female-headed household"))
+  )
+```
+
+### 6.3 Marital Status
+
+```{r}
+library(dplyr)
+
+# Pooling marital status features
+marital_pooled <- data_kor_ind %>%
+  group_by(URUT) %>%
+  summarise(
+    head_marital_status = R404[R403 == 1][1],     # Marital status of household head
+    n_married = sum(R404 == 2, na.rm = TRUE),     # Number of married members
+    # Single-parent family: Head is divorced/widowed and there is no spouse in household
+    is_single_parent = as.integer(
+      head_marital_status %in% c(3, 4) & 
+      !any(R403 == 2 & R404 == 2)
+    )
+  )
+
+# Merge with household dataset
+data_kor_rt <- data_kor_rt %>%
+  left_join(marital_pooled, by = "URUT")
+```
+
+```{r}
+# This code should be run AFTER your existing code block
+
+# Define the levels and labels for marital status for clarity
+# PLEASE VERIFY these labels match the codes in your data dictionary
+marital_levels <- c(1, 2, 3, 4)
+marital_labels <- c("Single/Unmarried", "Married", "Divorced", "Widowed")
+
+
+data_kor_rt <- data_kor_rt %>%
+  mutate(
+    # 1. Convert head's marital status from a numeric code to a factor
+    head_marital_factor = factor(head_marital_status,
+                                 levels = marital_levels,
+                                 labels = marital_labels),
+
+    # 2. Convert the single parent flag (0, 1) to a descriptive factor
+    is_single_parent_factor = factor(is_single_parent,
+                                     levels = c(0, 1),
+                                     labels = c("Not single-parent household", "Single-parent household"))
+  )
+```
+
+```{r}
+# Create a frequency table for the marital status of the household head
+table(data_kor_rt$head_marital_factor)
+
+# Create a frequency table for single-parent households
+table(data_kor_rt$is_single_parent_factor)
+```
+
+### 6.4 Relation with household head
+
+```{r}
+library(dplyr)
+
+relationship_pooled <- data_kor_ind %>%
+  group_by(URUT) %>%
+  summarise(
+    n_nuclear = sum(R403 %in% c(2, 3, 4), na.rm = TRUE),  # Spouse + all children
+    n_non_nuclear = sum(!(R403 %in% c(1, 2, 3, 4)), na.rm = TRUE), # Non-nuclear family
+    n_children = sum(R403 %in% c(3, 4), na.rm = TRUE),   # Biological + adopted children
+    n_elderly_parents = sum(R403 == 7 & R407 >= 60, na.rm = TRUE)  # Elderly parents/parents-in-law
+  )
+
+# Merge with household dataset
+data_kor_rt <- data_kor_rt %>%
+  left_join(relationship_pooled, by = "URUT")
+```
+
+### 6.5 Attend School
+
+```{r}
+library(dplyr)
+
+# Define school-age range (e.g., 7 to 18 years old)
+school_age_min <- 7
+school_age_max <- 18
+
+# Pooling school attendance
+school_pooled <- data_kor_ind %>%
+  mutate(is_school_age = R407 >= school_age_min & R407 <= school_age_max) %>%
+  group_by(URUT) %>%
+  summarise(
+    n_currently_school = sum(R610 == 2, na.rm = TRUE),  # Number currently in school
+    n_school_age = sum(is_school_age, na.rm = TRUE),    # Number of school-age children
+    n_school_age_not_in_school = sum(is_school_age & R610 != 2, na.rm = TRUE), # School-age not in school
+    prop_school_age_in_school = ifelse(
+      n_school_age > 0, 
+      sum(is_school_age & R610 == 2, na.rm = TRUE) / n_school_age, 
+      NA
+    ), # Proportion of school-age attending
+    all_school_age_in_school = as.integer(
+      n_school_age > 0 & sum(is_school_age & R610 != 2, na.rm = TRUE) == 0
+    ), # 1 if all school-age attending
+    any_in_school = as.integer(any(R610 == 2, na.rm = TRUE)) # 1 if any member in school
+  )
+
+# Merge to household dataset
+data_kor_rt <- data_kor_rt %>%
+  left_join(school_pooled, by = "URUT")
+```
+
+```{r}
+# This code should be run AFTER your existing code block
+
+data_kor_rt <- data_kor_rt %>%
+  mutate(
+    # 1. Create a detailed, three-level factor for school attendance status
+    school_attendance_status = factor(
+      # Use case_when to handle the different conditions
+      case_when(
+        n_school_age == 0 ~ "No school-age children",
+        n_school_age > 0 & n_school_age_not_in_school == 0 ~ "All school-age children attending",
+        n_school_age > 0 & n_school_age_not_in_school > 0 ~ "Some school-age children not attending"
+      ),
+      # Define the order of the levels for logical sorting in plots and tables
+      levels = c("All school-age children attending",
+                 "Some school-age children not attending",
+                 "No school-age children")
+    ),
+
+    # 2. Convert the simpler 'any_in_school' flag to a factor
+    any_in_school_factor = factor(any_in_school,
+                                  levels = c(0, 1),
+                                  labels = c("No members in school", "At least one member in school"))
+  )
+```
+
+### 6.6 Sekolah yang pernah/sedang diikuti (even though not finished) (cek)
+
+```{r}
+library(dplyr)
+
+# 1. Recode Education Group
+recode_edulevel <- function(x) {
+  case_when(
+    x %in% c(1,2,3,4,5) ~ "SD",
+    x %in% c(6,7,8,9,10) ~ "SMP",
+    x %in% c(11,12,13,14,15,16,17) ~ "SMA",
+    x %in% c(18,19) ~ "Diploma",
+    x %in% c(20,21) ~ "S1",
+    x %in% c(22,23,24) ~ "Lebih_S1",
+    TRUE ~ NA_character_
+  )
+}
+
+# 2. Recode Education into Estimated Years of Schooling
+map_eduyears <- function(x) {
+  case_when(
+    x %in% c(1,2,3,4,5) ~ 3,
+    x %in% c(6,7,8,9,10) ~ 6,
+    x %in% c(11,12,13,14,15,16,17) ~ 9,
+    x == 18 ~ 10,
+    x == 19 ~ 11,
+    x %in% c(20,21) ~ 12,
+    x == 22 ~ 13,
+    x == 23 ~ 14,
+    x == 24 ~ 16,
+    TRUE ~ NA_real_
+  )
+}
+
+# 3. Tambahkan variabel bantu ke data_kor_ind
+data_kor_ind <- data_kor_ind %>%
+  mutate(
+    edu_group = recode_edulevel(R612),
+    edu_years = map_eduyears(R612),
+    never_school = if_else(R612 %in% c(1,2), 1, 0),
+    secondary_or_higher = if_else(R612 >= 6, 1, 0),
+    adult = if_else(R407 >= 15, 1, 0),
+    secondary_adult = if_else(R407 >= 15 & R612 >= 6, 1, 0)
+  )
+
+# 4. Buat pooled_summary terlebih dahulu
+pooled_summary <- data_kor_ind %>%
+  group_by(URUT) %>%
+  summarise(
+    edu_highest_level = max(R612, na.rm = TRUE),
+    edu_lowest_level = min(R612, na.rm = TRUE),
+    edu_head = R612[which(R403 == 1)[1]],
+    n_never_school = sum(never_school, na.rm = TRUE),
+    n_smp_plus = sum(secondary_or_higher, na.rm = TRUE),
+    prop_adult_smp_plus = sum(secondary_adult, na.rm = TRUE) / sum(adult, na.rm = TRUE),
+    all_adult_smp_plus = as.integer(sum(secondary_adult, na.rm = TRUE) == sum(adult, na.rm = TRUE)),
+    avg_edu_years = mean(edu_years, na.rm = TRUE)
+  ) %>%
+  ungroup() %>%
+  mutate(
+    edu_highest_group = recode_edulevel(edu_highest_level),
+    edu_lowest_group = recode_edulevel(edu_lowest_level),
+    edu_head_group = recode_edulevel(edu_head)
+  )
+
+# 5. Lakukan LEFT JOIN agar pooled variabel ditambahkan di akhir
+data_kor_rt <- data_kor_rt %>%
+  left_join(pooled_summary, by = "URUT")
+```
+
+```{r}
+# Daftar variabel hasil pooling (bisa sesuaikan jika perlu)
+pooled_vars <- c(
+  "edu_highest_level", "edu_lowest_level", "edu_head",
+  "n_never_school", "n_smp_plus", "prop_adult_smp_plus",
+  "all_adult_smp_plus", "avg_edu_years",
+  "edu_highest_group", "edu_lowest_group", "edu_head_group"
+)
+
+# Hitung jumlah dan persentase NA
+na_summary <- sapply(data_kor_rt[pooled_vars], function(x) {
+  c(
+    total_na = sum(is.na(x)),
+    percent_na = mean(is.na(x)) * 100
+  )
+}) %>%
+  t() %>%
+  as.data.frame()
+
+# Tampilkan dengan pembulatan 2 digit
+na_summary <- round(na_summary, 2)
+na_summary
+```
+
+```{r}
+data_kor_rt <- data_kor_rt %>%
+  mutate(
+    prop_adult_smp_plus = if_else(is.na(prop_adult_smp_plus), 0, prop_adult_smp_plus),
+    avg_edu_years = if_else(is.na(avg_edu_years), 0, avg_edu_years),
+    edu_highest_group = if_else(is.na(edu_highest_group), "Tidak/belum pernah bersekolah", edu_highest_group),
+    edu_lowest_group = if_else(is.na(edu_lowest_group), "Tidak/belum pernah bersekolah", edu_lowest_group),
+    edu_head_group = if_else(is.na(edu_head_group), "Tidak/belum pernah bersekolah", edu_head_group)
+  )
+```
+
+```{r}
+# Daftar variabel hasil pooling (bisa sesuaikan jika perlu)
+pooled_vars <- c(
+  "edu_highest_level", "edu_lowest_level", "edu_head",
+  "n_never_school", "n_smp_plus", "prop_adult_smp_plus",
+  "all_adult_smp_plus", "avg_edu_years",
+  "edu_highest_group", "edu_lowest_group", "edu_head_group"
+)
+
+# Hitung jumlah dan persentase NA
+na_summary <- sapply(data_kor_rt[pooled_vars], function(x) {
+  c(
+    total_na = sum(is.na(x)),
+    percent_na = mean(is.na(x)) * 100
+  )
+}) %>%
+  t() %>%
+  as.data.frame()
+
+# Tampilkan dengan pembulatan 2 digit
+na_summary <- round(na_summary, 2)
+na_summary
+```
+
+### 6.7 Ijazah tertinggi yang dimiliki
+
+```{r}
+library(dplyr)
+
+# 1. Recode certificate level into grouped labels
+recode_certificate <- function(x) {
+  case_when(
+    x == 25 ~ "No_Certificate",
+    x %in% c(1,2,3,4,5) ~ "SD",
+    x %in% c(6,7,8,9,10) ~ "SMP",
+    x %in% c(11,12,13,14,15,16,17) ~ "SMA",
+    x %in% c(18,19) ~ "Diploma",
+    x %in% c(20,21) ~ "S1",
+    x %in% c(22,23,24) ~ "Lebih_S1",
+    TRUE ~ NA_character_
+  )
+}
+
+# 2. Tambahkan variabel bantu ke data_kor_ind
+data_kor_ind <- data_kor_ind %>%
+  mutate(
+    cert_group = recode_certificate(R614),
+    no_cert = if_else(R614 == 25, 1, 0),
+    sma_or_higher = if_else(R614 >= 11 & R614 <= 24, 1, 0),
+    primary_plus = if_else(R614 >= 1 & R614 <= 24, 1, 0),      # SD atau lebih
+    secondary_plus = if_else(R614 >= 6 & R614 <= 24, 1, 0),    # SMP atau lebih
+    tertiary = if_else(R614 >= 20 & R614 <= 24, 1, 0)          # D4/S1 ke atas
+  )
+
+# 3. Pooling ke level rumah tangga
+cert_summary <- data_kor_ind %>%
+  group_by(URUT) %>%
+  summarise(
+    n_no_cert = sum(no_cert, na.rm = TRUE),
+    highest_cert_level = if (all(R614 == 25 | is.na(R614))) NA_integer_ else max(R614[R614 != 25], na.rm = TRUE),
+    n_sma_or_higher = sum(sma_or_higher, na.rm = TRUE),
+    prop_primary_plus = mean(primary_plus, na.rm = TRUE),
+    prop_secondary_plus = mean(secondary_plus, na.rm = TRUE),
+    has_tertiary = as.integer(any(tertiary == 1, na.rm = TRUE))
+  ) %>%
+  ungroup() %>%
+  mutate(
+    highest_cert_group = recode_certificate(highest_cert_level)
+  )
+
+# 4. Gabungkan hasil pooled ke data_kor_rt dan tangani NA
+data_kor_rt <- data_kor_rt %>%
+  left_join(cert_summary, by = "URUT") %>%
+  mutate(
+    # Tangani NA dengan nilai default yang logis
+    highest_cert_group = if_else(is.na(highest_cert_group), "Tidak/Belum pernah bersekolah", highest_cert_group),
+    prop_primary_plus = if_else(is.na(prop_primary_plus), 0, prop_primary_plus),
+    prop_secondary_plus = if_else(is.na(prop_secondary_plus), 0, prop_secondary_plus),
+    n_sma_or_higher = if_else(is.na(n_sma_or_higher), 0, n_sma_or_higher),
+    has_tertiary = if_else(is.na(has_tertiary), 0, has_tertiary),
+
+    # Konversi has_tertiary menjadi faktor dengan label
+    has_tertiary = factor(
+      has_tertiary,
+      levels = c(0, 1),
+      labels = c("No tertiary level", "At least one tertiary level")
+    )
+  )
+```
+
+```{r}
+# Daftar variabel hasil pooling dari R614
+cert_vars <- c(
+  "n_no_cert",
+  "highest_cert_level",
+  "highest_cert_group",
+  "n_sma_or_higher",
+  "prop_primary_plus",
+  "prop_secondary_plus",
+  "has_tertiary"
+)
+
+# Hitung jumlah dan persentase NA
+na_cert_summary <- sapply(data_kor_rt[cert_vars], function(x) {
+  c(
+    total_na = sum(is.na(x)),
+    percent_na = mean(is.na(x)) * 100
+  )
+}) %>%
+  t() %>%
+  as.data.frame()
+
+# Tampilkan ringkasan dengan pembulatan rapi
+na_cert_summary <- round(na_cert_summary, 2)
+na_cert_summary
+```
+
+### 6.8 KIP
+
+```{r}
+library(dplyr)
+
+# Define school-age (adjust if needed)
+school_age_min <- 5
+school_age_max <- 30
+
+data_kor_ind <- data_kor_ind %>%
+  mutate(
+    is_school_age = R407 >= school_age_min & R407 <= school_age_max,
+    is_kip = R615 %in% c(1, 2)
+  )
+
+kip_pooled <- data_kor_ind %>%
+  group_by(URUT) %>%
+  summarise(
+    n_kip = sum(is_kip, na.rm = TRUE),               # Number with KIP
+    has_kip = as.integer(any(is_kip, na.rm = TRUE)), # Any KIP recipient
+    n_school_age = sum(is_school_age, na.rm = TRUE),  # School-age children
+    prop_school_age_kip = ifelse(n_school_age > 0,
+                                 sum(is_school_age & is_kip, na.rm = TRUE) / n_school_age,
+                                 NA),               # Proportion of school-age with KIP
+    all_school_age_kip = as.integer(n_school_age > 0 &
+                                    sum(is_school_age & !is_kip, na.rm = TRUE) == 0) # All eligible have KIP
+  )
+
+data_kor_rt <- data_kor_rt %>%
+  left_join(kip_pooled, by = "URUT")
+```
+
+### 6.9 PIP
+
+```{r}
+library(dplyr)
+
+# Define school-age (as previously)
+school_age_min <- 5
+school_age_max <- 30
+
+data_kor_ind <- data_kor_ind %>%
+  mutate(
+    is_school_age = R407 >= school_age_min & R407 <= school_age_max,
+    is_pip = R616 == 1
+  )
+
+pip_pooled <- data_kor_ind %>%
+  group_by(URUT) %>%
+  summarise(
+    n_pip = sum(is_pip, na.rm = TRUE),                                    # Number of PIP recipients
+    has_pip = as.integer(any(is_pip, na.rm = TRUE)),                      # At least one PIP recipient
+    n_school_age = sum(is_school_age, na.rm = TRUE),                      # Number of school-age children
+    prop_school_age_pip = ifelse(n_school_age > 0,
+                                 sum(is_school_age & is_pip, na.rm = TRUE) / n_school_age,
+                                 NA),                                     # Proportion of school-age children receiving PIP
+    all_school_age_pip = as.integer(n_school_age > 0 &
+                                    sum(is_school_age & !is_pip, na.rm = TRUE) == 0) # All eligible children receive PIP
+  )
+
+data_kor_rt <- data_kor_rt %>%
+  left_join(pip_pooled, by = "URUT")
+```
+
+### 6.10 SAVING
+
+```{r}
+library(dplyr)
+
+# --- This is the complete, corrected workflow ---
+
+# 1. Start with the individual-level data to define flags
+data_kor_ind <- data_kor_ind %>%
+  mutate(
+    is_saving = R701 == 1,
+    is_adult = R407 >= 18
+  )
+
+# 2. Create the household-level summary dataframe.
+#    We will explicitly check the names of this dataframe right after creating it.
+rekening_pooled <- data_kor_ind %>%
+  group_by(URUT) %>%
+  summarise(
+    n_with_saving = sum(is_saving, na.rm = TRUE),
+    has_saving = as.integer(any(is_saving, na.rm = TRUE)), # This creates the 'has_saving' column
+    prop_with_saving = mean(is_saving, na.rm = TRUE),
+    all_adults_with_saving = as.integer(sum(is_adult & !is_saving, na.rm = TRUE) == 0 & sum(is_adult, na.rm = TRUE) > 0),
+    head_with_saving = as.integer(any(R403 == 1 & is_saving, na.rm = TRUE))
+  )
+
+# 3. (Optional but recommended) Verify that 'rekening_pooled' was created correctly
+#    Run this line and check the output for 'has_saving', 'all_adults_with_saving', etc.
+# print(names(rekening_pooled))
+
+# 4. Join the summary data to the main household data AND create the factors
+data_kor_rt <- data_kor_rt %>%
+  left_join(rekening_pooled, by = "URUT") %>% # Join the freshly created data...
+  mutate(                                     # ...then immediately create factors
+    # Convert 'has_saving' flag to a descriptive factor
+    has_saving_factor = factor(has_saving,
+                               levels = c(0, 1),
+                               labels = c("No one has savings", "At least one member has savings")),
+
+    # Convert 'all_adults_with_saving' flag to a descriptive factor
+    all_adults_saving_factor = factor(all_adults_with_saving,
+                                      levels = c(0, 1),
+                                      labels = c("Not all adults have savings", "All adults have savings")),
+
+    # Convert 'head_with_saving' flag to a descriptive factor
+    head_saving_factor = factor(head_with_saving,
+                                levels = c(0, 1),
+                                labels = c("Head does not have savings", "Head has savings"))
+  )
+
+
+# --- Now you can safely check the results ---
+# This will now work without error.
+table(data_kor_rt$has_saving_factor)
+table(data_kor_rt$all_adults_saving_factor)
+table(data_kor_rt$head_saving_factor)
+```
+
+### 6.11 **Menggunakan produk/layanan jasa keuangan**
+
+```{r}
+library(dplyr)
+
+data_kor_ind <- data_kor_ind %>%
+  mutate(
+    uses_fin_service = R702 == 1
+  )
+
+fin_service_pooled <- data_kor_ind %>%
+  group_by(URUT) %>%
+  summarise(
+    n_uses_fin_service = sum(uses_fin_service, na.rm = TRUE),                          # Number using services
+    any_uses_fin_service = as.integer(any(uses_fin_service, na.rm = TRUE)),            # Any member uses services
+    prop_uses_fin_service = mean(uses_fin_service, na.rm = TRUE),                      # Proportion using services
+    head_uses_fin_service = as.integer(any(R403 == 1 & uses_fin_service, na.rm = TRUE))# Head uses services
+  )
+
+# 3. Join the summary data to the main household data AND create the new factors in one step
+data_kor_rt <- data_kor_rt %>%
+  left_join(fin_service_pooled, by = "URUT") %>% # Join the freshly created data...
+  mutate(                                       # ...then immediately create factors
+    # Convert 'any_uses_fin_service' flag to a descriptive factor
+    any_fin_service_factor = factor(any_uses_fin_service,
+                                    levels = c(0, 1),
+                                    labels = c("No one uses financial services",
+                                               "At least one member uses services")),
+
+    # Convert 'head_uses_fin_service' flag to a descriptive factor
+    head_fin_service_factor = factor(head_uses_fin_service,
+                                     levels = c(0, 1),
+                                     labels = c("Head does not use services",
+                                                "Head uses services"))
+  )
+
+
+# --- Now you can safely check the results ---
+# This will now work without error.
+table(data_kor_rt$any_fin_service_factor)
+table(data_kor_rt$head_fin_service_factor)
+```
+
+### 6.12 employment
+
+```{r}
+library(dplyr)
+
+# --- This is the complete, combined workflow ---
+
+# 1. Create a comprehensive household summary in one step
+activity_pooled <- data_kor_ind %>%
+  group_by(URUT) %>%
+  summarise(
+    # Get the numeric code for the head's main activity
+    head_main_activity_code = R704[R403 == 1][1],
+    # Get the counts for each activity type across all members
+    n_not_working = sum(R704 == 1 , na.rm = TRUE),
+    n_working = sum(R704 == 1, na.rm = TRUE),
+    n_school = sum(R704 == 2, na.rm = TRUE),
+    n_household = sum(R704 == 3, na.rm = TRUE),
+    n_other_activity = sum(R704 == 4, na.rm = TRUE)
+  )
+
+# 2. Join the summary data to the main household data AND create the new factor
+data_kor_rt <- data_kor_rt %>%
+  left_join(activity_pooled, by = "URUT") %>% # Join the freshly created data...
+  mutate(                                     # ...then immediately create the new factor
+    # Convert the numeric head_main_activity_code into a descriptive factor
+    head_activity_factor = factor(
+      # Use case_when for clear mapping from code to label
+      case_when(
+        head_main_activity_code == 0 ~ "Does not have activity",
+        head_main_activity_code == 1 ~ "Working",
+        head_main_activity_code == 2 ~ "Attending school",
+        head_main_activity_code == 3 ~ "Homemaking",
+        head_main_activity_code == 4 ~ "Other activities"
+      ),
+      # Define the levels to control the order in tables and plots
+      levels = c("Does not have activity", "Working", "Attending school", "Homemaking", "Other activities")
+    )
+  )
+```
+
+### 6.13 Main Job Sector
+
+```{r}
+sector_labels_en <- c(
+  "0" = "Not Working",
+  "1" = "Agriculture (Crops)",
+  "2" = "Horticulture",
+  "3" = "Plantation",
+  "4" = "Fishery",
+  "5" = "Livestock",
+  "6" = "Forestry & Other Agriculture",
+  "7" = "Mining & Quarrying",
+  "8" = "Manufacturing",
+  "9" = "Utilities (Electricity, Gas, etc.)",
+  "10" = "Water Supply & Waste Management",
+  "11" = "Construction",
+  "12" = "Wholesale & Retail Trade",
+  "13" = "Transportation & Storage",
+  "14" = "Accommodation & Food Service",
+  "15" = "Information & Communication",
+  "16" = "Financial & Insurance",
+  "17" = "Real Estate",
+  "18" = "Professional, Scientific & Technical",
+  "19" = "Rental & Leasing",
+  "20" = "Public Administration & Defense",
+  "21" = "Education",
+  "22" = "Human Health & Social Work",
+  "23" = "Arts, Entertainment & Recreation",
+  "24" = "Other Service Activities",
+  "25" = "Household as Employer",
+  "26" = "Extraterritorial Organisations"
+)
+
+```
+
+```{r}
+library(dplyr)
+library(purrr)
+library(stringr)
+
+# Helper function to get mode (most frequent value)
+get_mode <- function(v) {
+  uniqv <- unique(v[!is.na(v)])
+  uniqv[which.max(tabulate(match(v, uniqv)))]
+}
+
+# 2. Create the household-level summary, keeping the numeric CODES.
+sector_pooled <- data_kor_ind %>%
+  group_by(URUT) %>%
+  summarise(
+    head_sector_code = R706[R403 == 1][1],
+    common_sector_code = get_mode(R706),
+    n_unique_sectors = n_distinct(R706, na.rm = TRUE)
+  )
+
+# 3. Join the summary data AND create the new factors in one step
+data_kor_rt <- data_kor_rt %>%
+  left_join(sector_pooled, by = "URUT") %>% # Join the freshly created data...
+  mutate(                                     # ...then immediately create factors
+    # Convert the head's sector code into a descriptive English factor
+    head_sector_factor = factor(
+      sector_labels_en[as.character(head_sector_code)],
+      levels = sector_labels_en # Use the labels themselves to set the factor levels
+    ),
+
+    # Convert the most common sector code into a descriptive English factor
+    common_sector_factor = factor(
+      sector_labels_en[as.character(common_sector_code)],
+      levels = sector_labels_en
+    )
+  )
+```
+
+### 6.14 main job status
+
+```{r}
+library(dplyr)
+
+# 1. Define a named vector for the NEW English labels.
+#    The names (e.g., "0", "1") must match the original numeric codes from R707.
+job_status_labels <- c(
+  "0" = "Not Working",
+  "1" = "Self-employed",
+  "2" = "Self-employed (w/ unpaid/temp workers)",
+  "3" = "Self-employed (w/ paid/permanent workers)",
+  "4" = "Employee (salaried)",
+  "5" = "Freelancer / Casual worker",
+  "6" = "Unpaid family worker"
+)
+
+jobstatus_pooled <- data_kor_ind %>%
+  group_by(URUT) %>%
+  summarise(
+    head_jobstatus_code = R707[R403 == 1][1],
+    head_jobstatus_label = job_status_labels[as.character(head_jobstatus_code)],
+    n_permanent = sum(R707 == 4, na.rm = TRUE),                          # Permanent employees
+    n_unpaid = sum(R707 == 6, na.rm = TRUE),                             # Unpaid family workers
+    n_self_employed = sum(R707 %in% c(1,2,3), na.rm = TRUE),             # Self-employed (all variants)
+    n_casual = sum(R707 == 5, na.rm = TRUE),                             # Casual/free workers
+    prop_self_or_casual = (sum(R707 %in% c(1,2,3,5), na.rm = TRUE) / n()), # Prop self-employed/casual
+    any_unpaid = as.integer(any(R707 == 6, na.rm = TRUE))                # Any unpaid family worker
+  )
+
+data_kor_rt <- data_kor_rt %>%
+  left_join(jobstatus_pooled, by = "URUT")
+```
+
+### 6.15 **total hours worked from all jobs**
+
+```{r}
+library(dplyr)
+
+hours_pooled <- data_kor_ind %>%
+  group_by(URUT) %>%
+  summarise(
+    total_working_hours = sum(R709, na.rm = TRUE),                      # Total working hours in household
+    avg_working_hours = mean(R709, na.rm = TRUE),                       # Average total hours per member
+    max_working_hours = max(R709, na.rm = TRUE),                        # Maximum hours by a member
+    n_members = n(),                                                    # Total household members
+    working_hours_per_capita = total_working_hours / n_members,         # Per capita
+    head_working_hours = R709[R403 == 1][1]                             # Head's total hours
+  )
+
+data_kor_rt <- data_kor_rt %>%
+  left_join(hours_pooled, by = "URUT")
+```
+
+### 6.16 **uses mobile phone**
+
+```{r}
+library(dplyr)
+
+# --- This is the complete, corrected workflow ---
+
+# 1. Start with the individual-level data to define the necessary flags
+data_kor_ind <- data_kor_ind %>%
+  mutate(
+    uses_mobile = R801 == 1,
+    is_adult = R407 >= 18
+  )
+
+# 2. Create the household-level summary dataframe.
+mobile_pooled <- data_kor_ind %>%
+  group_by(URUT) %>%
+  summarise(
+    n_uses_mobile = sum(uses_mobile, na.rm = TRUE), # Number using a mobile phone
+    any_uses_mobile = as.integer(any(uses_mobile, na.rm = TRUE)), # At least one uses a mobile phone
+    prop_uses_mobile = mean(uses_mobile, na.rm = TRUE), # Proportion using a mobile phone
+    all_adults_use_mobile = as.integer(sum(is_adult & !uses_mobile, na.rm = TRUE) == 0 & sum(is_adult, na.rm = TRUE) > 0), # All adults use
+    head_uses_mobile = as.integer(any(R403 == 1 & uses_mobile, na.rm = TRUE)) # Head uses a mobile phone
+  )
+
+# 3. Join the summary data AND create the new factors in one step
+data_kor_rt <- data_kor_rt %>%
+  left_join(mobile_pooled, by = "URUT") %>% # Join the freshly created data...
+  mutate(                                   # ...then immediately create factors from the new columns
+    # Convert 'any_uses_mobile' flag to a descriptive factor
+    any_mobile_user_factor = factor(any_uses_mobile,
+                                    levels = c(0, 1),
+                                    labels = c("No mobile user in household",
+                                               "At least one mobile user")),
+
+    # Convert 'all_adults_use_mobile' flag to a descriptive factor
+    all_adults_mobile_factor = factor(all_adults_use_mobile,
+                                      levels = c(0, 1),
+                                      labels = c("Not all adults use a mobile",
+                                                 "All adults use a mobile")),
+
+    # Convert 'head_uses_mobile' flag to a descriptive factor
+    head_mobile_user_factor = factor(head_uses_mobile,
+                                     levels = c(0, 1),
+                                     labels = c("Head does not use a mobile",
+                                                "Head uses a mobile"))
+  )
+```
+
+### 6.17 **owns a mobile phone**
+
+```{r}
+library(dplyr)
+
+# --- This is the complete, corrected workflow ---
+
+# 1. Start with the individual-level data to define the necessary flags
+data_kor_ind <- data_kor_ind %>%
+  mutate(
+    owns_mobile = R802 == 1,
+    is_adult = R407 >= 18
+  )
+
+# 2. Create the household-level summary dataframe.
+mobile_owner_pooled <- data_kor_ind %>%
+  group_by(URUT) %>%
+  summarise(
+    n_owns_mobile = sum(owns_mobile, na.rm = TRUE),
+    any_owns_mobile = as.integer(any(owns_mobile, na.rm = TRUE)),
+    prop_owns_mobile = mean(owns_mobile, na.rm = TRUE),
+    all_adults_own_mobile = as.integer(sum(is_adult & !owns_mobile, na.rm = TRUE) == 0 & sum(is_adult, na.rm = TRUE) > 0),
+    head_owns_mobile = as.integer(any(R403 == 1 & owns_mobile, na.rm = TRUE))
+  )
+
+# 3. Join the summary data AND create the new factors in one step
+data_kor_rt <- data_kor_rt %>%
+  left_join(mobile_owner_pooled, by = "URUT") %>% # Join the freshly created data...
+  mutate(                                         # ...then immediately create factors from the new columns
+    # Convert 'any_owns_mobile' flag to a descriptive factor
+    any_mobile_owner_factor = factor(any_owns_mobile,
+                                     levels = c(0, 1),
+                                     labels = c("No mobile owner in household",
+                                                "At least one mobile owner")),
+
+    # Convert 'all_adults_own_mobile' flag to a descriptive factor
+    all_adults_mobile_owner_factor = factor(all_adults_own_mobile,
+                                            levels = c(0, 1),
+                                            labels = c("Not all adults own a mobile",
+                                                       "All adults own a mobile")),
+
+    # Convert 'head_owns_mobile' flag to a descriptive factor
+    head_mobile_owner_factor = factor(head_owns_mobile,
+                                      levels = c(0, 1),
+                                      labels = c("Head does not own a mobile",
+                                                 "Head owns a mobile"))
+  )
+```
+
+```{r}
+# Check for any mobile owner in the household
+table(data_kor_rt$any_mobile_owner_factor)
+
+# Check mobile ownership status for all adults
+table(data_kor_rt$all_adults_mobile_owner_factor)
+
+# Check mobile ownership for the household head
+table(data_kor_rt$head_mobile_owner_factor)
+```
+
+### 6.18 **ever used internet**
+
+```{r}
+library(dplyr)
+
+data_kor_ind <- data_kor_ind %>%
+  mutate(
+    ever_internet = R808 == 1,
+    is_school_age = R407 >= 7 & R407 <= 18
+  )
+
+internet_pooled <- data_kor_ind %>%
+  group_by(URUT) %>%
+  summarise(
+    n_ever_internet = sum(ever_internet, na.rm = TRUE),                         # Number ever used internet
+    any_ever_internet = as.integer(any(ever_internet, na.rm = TRUE)),           # At least one ever used internet
+    prop_ever_internet = mean(ever_internet, na.rm = TRUE),                     # Proportion ever used internet
+    n_school_age = sum(is_school_age, na.rm = TRUE),                            # Number of school-age children
+    all_school_age_ever_internet = as.integer(n_school_age > 0 &
+      sum(is_school_age & !ever_internet, na.rm = TRUE) == 0),                  # All school-age children have used
+    head_ever_internet = as.integer(any(R403 == 1 & ever_internet, na.rm = TRUE)) # Head ever used internet
+  )
+
+data_kor_rt <- data_kor_rt %>%
+  left_join(internet_pooled, by = "URUT")
+```
+
+### 6.19 E-ciggarete use
+
+```{r}
+library(dplyr)
+
+# --- This is the complete, corrected workflow ---
+
+# 1. Start with the individual-level data to define the flag
+data_kor_ind <- data_kor_ind %>%
+  mutate(
+    uses_ecig = R1206 %in% c(1, 2)
+  )
+
+# 2. Create the household-level summary dataframe.
+ecig_pooled <- data_kor_ind %>%
+  group_by(URUT) %>%
+  summarise(
+    n_uses_ecig = sum(uses_ecig, na.rm = TRUE),
+    any_uses_ecig = as.integer(any(uses_ecig, na.rm = TRUE)),
+    prop_uses_ecig = mean(uses_ecig, na.rm = TRUE),
+    head_uses_ecig = as.integer(any(R403 == 1 & uses_ecig, na.rm = TRUE))
+  )
+
+# 3. Join the summary data AND create the new factors in one step
+data_kor_rt <- data_kor_rt %>%
+  left_join(ecig_pooled, by = "URUT") %>% # Join the freshly created data...
+  mutate(                                 # ...then immediately create factors from the new columns
+    # Convert 'any_uses_ecig' flag to a descriptive factor
+    any_ecig_user_factor = factor(any_uses_ecig,
+                                  levels = c(0, 1),
+                                  labels = c("No e-cigarette user in household",
+                                             "At least one e-cigarette user")),
+
+    # Convert 'head_uses_ecig' flag to a descriptive factor
+    head_ecig_user_factor = factor(head_uses_ecig,
+                                   levels = c(0, 1),
+                                   labels = c("Head does not use e-cigarettes",
+                                              "Head uses e-cigarettes"))
+  )
+```
+
+```{r}
+# Check for any e-cigarette user in the household
+table(data_kor_rt$any_ecig_user_factor)
+
+# Check e-cigarette usage for the household head
+table(data_kor_rt$head_ecig_user_factor)
+```
+
+### 6.20 current tobacco smoker
+
+```{r}
+library(dplyr)
+
+# --- This is the complete, corrected workflow ---
+
+# 1. Start with the individual-level data to define the necessary flags
+data_kor_ind <- data_kor_ind %>%
+  mutate(
+    current_smoker = R1207 %in% c(1, 2),
+    is_adult = R407 >= 18
+  )
+
+# 2. Create the household-level summary dataframe.
+smoke_pooled <- data_kor_ind %>%
+  group_by(URUT) %>%
+  summarise(
+    n_current_smokers = sum(current_smoker, na.rm = TRUE),
+    any_current_smoker = as.integer(any(current_smoker, na.rm = TRUE)),
+    prop_current_smokers = mean(current_smoker, na.rm = TRUE),
+    head_current_smoker = as.integer(any(R403 == 1 & current_smoker, na.rm = TRUE)),
+    any_adult_smoker = as.integer(any(is_adult & current_smoker, na.rm = TRUE))
+  )
+
+# 3. Join the summary data AND create the new factors in one step
+data_kor_rt <- data_kor_rt %>%
+  left_join(smoke_pooled, by = "URUT") %>% # Join the freshly created data...
+  mutate(                                  # ...then immediately create factors from the new columns
+    # Convert 'any_current_smoker' flag to a descriptive factor
+    any_smoker_factor = factor(any_current_smoker,
+                               levels = c(0, 1),
+                               labels = c("No smoker in household",
+                                          "At least one smoker in household")),
+
+    # Convert 'head_current_smoker' flag to a descriptive factor
+    head_smoker_factor = factor(head_current_smoker,
+                                levels = c(0, 1),
+                                labels = c("Head does not smoke", "Head smokes")),
+
+    # Convert 'any_adult_smoker' flag to a descriptive factor
+    any_adult_smoker_factor = factor(any_adult_smoker,
+                                     levels = c(0, 1),
+                                     labels = c("No adult smoker in household",
+                                                "At least one adult smoker"))
+  )
+```
+
+```{r}
+# Check for any smoker in the household
+table(data_kor_rt$any_smoker_factor)
+
+# Check smoking status for the household head
+table(data_kor_rt$head_smoker_factor)
+
+# Check for any adult smoker in the household
+table(data_kor_rt$any_adult_smoker_factor)
+```
+
+### 6.21 cigarettes per week
+
+```{r}
+library(dplyr)
+
+# For safety, treat NA and "don't know" as 0 (if needed; adjust if required)
+data_kor_ind <- data_kor_ind %>%
+  mutate(
+    cigs_per_week = as.numeric(R1208),
+    is_smoker = !is.na(cigs_per_week) & cigs_per_week > 0
+  )
+
+cigarettes_pooled <- data_kor_ind %>%
+  group_by(URUT) %>%
+  summarise(
+    total_cigs_week = sum(cigs_per_week, na.rm = TRUE),                            # Total cigs per week in household
+    n_smokers = sum(is_smoker, na.rm = TRUE),                                      # Number of smokers (nonzero)
+    avg_cigs_per_smoker = ifelse(n_smokers > 0, total_cigs_week / n_smokers, 0),  # Average per smoker
+    max_cigs_per_member = max(cigs_per_week, na.rm = TRUE),                        # Max cigs per week by any member
+    n_members = n(),                                                               # Household size
+    avg_cigs_per_capita = ifelse(n_members > 0, total_cigs_week / n_members, NA),  # Per capita
+    head_cigs_week = cigs_per_week[R403 == 1][1]                                   # Head's cigs per week
+  )
+
+data_kor_rt <- data_kor_rt %>%
+  left_join(cigarettes_pooled, by = "URUT")
+```
+
+### 6.22 ever smoked tobacco
+
+```{r}
+library(dplyr)
+
+# --- This is the complete, corrected workflow ---
+
+# 1. Start with the individual-level data to define the flag
+data_kor_ind <- data_kor_ind %>%
+  mutate(
+    ever_smoked = R1209 %in% c(1, 2)
+  )
+
+# 2. Create the household-level summary dataframe.
+ever_smoked_pooled <- data_kor_ind %>%
+  group_by(URUT) %>%
+  summarise(
+    n_ever_smoked = sum(ever_smoked, na.rm = TRUE),
+    any_ever_smoked = as.integer(any(ever_smoked, na.rm = TRUE)),
+    prop_ever_smoked = mean(ever_smoked, na.rm = TRUE),
+    head_ever_smoked = as.integer(any(R403 == 1 & ever_smoked, na.rm = TRUE))
+  )
+
+# 3. Join the summary data AND create the new factors in one step
+data_kor_rt <- data_kor_rt %>%
+  left_join(ever_smoked_pooled, by = "URUT") %>% # Join the freshly created data...
+  mutate(                                       # ...then immediately create factors from the new columns
+    # Convert 'any_ever_smoked' flag to a descriptive factor
+    any_ever_smoked_factor = factor(any_ever_smoked,
+                                    levels = c(0, 1),
+                                    labels = c("No one has ever smoked",
+                                               "At least one member has ever smoked")),
+
+    # Convert 'head_ever_smoked' flag to a descriptive factor
+    head_ever_smoked_factor = factor(head_ever_smoked,
+                                     levels = c(0, 1),
+                                     labels = c("Head has never smoked",
+                                                "Head has ever smoked"))
+  )
+```
+
+## 7. Backup data full
+
+```{r}
+
+# save data
+#saveRDS(data_kor_rt, "data_kor_rt_final.rds")
+
+library(writexl)
+
+# Create a data frame with column names
+column_list <- data.frame(Column_Name = names(data_kor_rt))
+
+# Write to Excel
+#write_xlsx(column_list, "data_kor_rt_columns.xlsx")
+
+```
+
+# Filter used data
+
+```{r}
+selected_features <- c(
+  "R1802", "R1804", "R1805", "R1806A", "R1807", "R1808", "R1809A", 
+  "R1810A", "R1811A", "R1812", "R1813A", "R1813B", "R1813C", "R1813D", 
+  "R1813E", "R1814A", "R1815A", "R1816", "R1817", "R1901A", "R1901B", 
+  "R1901C", "R1901D", "R1901E", "R1901F", "R1901G", "R1901H", "R1901I", 
+  "R1901J", "R1901K", "R2001A", "R2001B", "R2001C", "R2001D", "R2001E", 
+  "R2001F", "R2001G", "R2001H", "R2001I", "R2001J", "R2001K", "R2001L", 
+  "R2001M", "R2201A2", "R2201B2", "R2201C2", "R2201E2", "R2201F2", 
+  "R2202", "R2203", "R2204A", "R2209A", "R2209B", "R2209C", "R2209D",
+
+  # Pooled age features
+  "head_age", "oldest_age", "age_gap", "n_children_lt15", "n_elderly_60", "avg_age",
+
+  # Pooled gender and marital status features
+  "sex_head_factor", "head_marital_factor", "n_married", "is_single_parent_factor",
+
+  # Pooled relationship features
+  "n_nuclear", "n_non_nuclear", "n_children", "n_elderly_parents",
+
+  # Pooled school features
+  "n_currently_school", "n_school_age_not_in_school", "any_in_school_factor",
+
+  # Pooled education features
+  "edu_head_group", "edu_highest_group", "edu_lowest_group",
+  "prop_adult_smp_plus", "avg_edu_years",
+
+  # Pooled certificate and assistance features
+  "highest_cert_group", "n_sma_or_higher", "has_tertiary",
+  "n_kip", "n_pip",
+
+  # Pooled savings and financial service features
+  "n_with_saving", "prop_with_saving", "has_saving_factor", "head_saving_factor",
+  "n_uses_fin_service", "prop_uses_fin_service", "head_fin_service_factor",
+
+  # Pooled activity, sector, and job status features
+  "head_activity_factor", "n_working", "n_school", "n_household",
+  "head_sector_factor", "common_sector_factor", "head_jobstatus_label",
+  "n_permanent", "n_unpaid", "n_self_employed", "n_casual",
+
+  # Pooled working hours features
+  "avg_working_hours", "max_working_hours", "head_working_hours",
+
+  # Pooled mobile and health behaviour features
+  "any_mobile_user_factor", "head_mobile_user_factor", "n_owns_mobile",
+  "all_adults_mobile_owner_factor", "head_mobile_owner_factor",
+  "prop_uses_ecig", "head_ecig_user_factor",
+  "prop_current_smokers", "head_smoker_factor",
+  "avg_cigs_per_smoker", "max_cigs_per_member", "head_cigs_week",
+  "n_ever_smoked", "head_ever_smoked_factor",
+  
+  # Target Feature
+  "MISKIN_KAKO"
+)
+```
+
+```{r}
+filtered_data <- data_kor_rt %>%
+  select(any_of(selected_features))
+```
+
+# Check Type per Variable
+
+## R1802
+
+```{r}
+# Load the dplyr library (if not already loaded)
+library(dplyr)
+
+# Define the desired order of the categories for the ordinal variable.
+# You can rearrange this vector to change the factor's order.
+ownership_level_order <- c("Owned", "Rented", "Rent-free", "Official residence", "Other")
+
+# --- Mutate the column into an ordered factor ---
+filtered_data <- filtered_data %>%
+  mutate(
+    R1802_factor = factor(
+      # 1. First, translate numbers to text labels
+      x = case_when(
+        R1802 == 1 ~ "Owned",
+        R1802 == 2 ~ "Rented",
+        R1802 == 3 ~ "Rent-free",
+        R1802 == 4 ~ "Official residence",
+        R1802 == 5 ~ "Other"
+      ),
+      # 2. Then, set the levels in your desired order
+      levels = ownership_level_order,
+      # 3. Finally, specify that the factor is ordered
+      ordered = TRUE
+    )
+  )
+
+# --- Now, create the frequency table ---
+# When you use count() on a factor, it will automatically use the factor's order.
+# We remove 'sort = TRUE' to see this effect.
+ownership_tabulation <- filtered_data %>%
+  count(R1802_factor)
+
+# --- Print the result to the console ---
+# The table will be sorted according to the 'ownership_level_order' vector.
+print(ownership_tabulation)
+
+# You can also verify the structure of the new column
+# str(filtered_data$R1802_factor)
+```
+
+## R1805
+
+```{r}
+# Load the dplyr library (if not already loaded)
+library(dplyr)
+
+# --- Mutate the R1805 column into a factor ---
+filtered_data <- filtered_data %>%
+  mutate(
+    R1805_factor = factor(
+      # 1. First, translate numbers (1 and 5) to text labels
+      x = case_when(
+        R1805 == 1 ~ "Yes",
+        R1805 == 5 ~ "No"
+        # Any other value in R1805 will become NA in the new column
+      ),
+      # 2. Define the order of levels for consistent tables and plots
+      levels = c("Yes", "No")
+    )
+  )
+
+# --- Now, create the frequency table for the new factor ---
+# The count() function will tally the "Yes" and "No" responses.
+other_property_tabulation <- filtered_data %>%
+  count(R1805_factor)
+
+# --- Print the result to the console ---
+# The table will be sorted according to the 'levels' vector ("Yes", then "No").
+print(other_property_tabulation)
+
+# You can also check the structure of the new column to confirm it's a factor
+# str(filtered_data$R1805_factor)
+```
+
+## R1806A
+
+```{r}
+# Load the dplyr library (if not already loaded)
+library(dplyr)
+
+# --- Mutate the R1806A column into a factor ---
+filtered_data <- filtered_data %>%
+  mutate(
+    R1806A_factor = factor(
+      # 1. First, translate the numeric codes to text labels
+      x = case_when(
+        R1806A == 1 ~ "Concrete",
+        R1806A == 2 ~ "Tiles",
+        R1806A == 3 ~ "Corrugated metal",
+        R1806A == 4 ~ "Asbestos",
+        R1806A == 5 ~ "Bamboo",
+        R1806A == 6 ~ "Wood/Shingles",
+        R1806A == 7 ~ "Thatch/Plant fibres",
+        R1806A == 8 ~ "Other"
+      ),
+      # 2. Define the order of the levels for consistent tables and plots
+      levels = c(
+        "Concrete",
+        "Tiles",
+        "Corrugated metal",
+        "Asbestos",
+        "Bamboo",
+        "Wood/Shingles",
+        "Thatch/Plant fibres",
+        "Other"
+      )
+    )
+  )
+
+# --- Now, create the frequency table for the new factor ---
+roofing_material_tabulation <- filtered_data %>%
+  count(R1806A_factor)
+
+# --- Print the result to the console ---
+print(roofing_material_tabulation)
+
+# You can also check the structure of the new column
+# str(filtered_data$R1806A_factor)
+```
+
+## R1807
+
+```{r}
+# Load the dplyr library (if not already loaded)
+library(dplyr)
+
+# --- Mutate the R1807 column into a factor ---
+filtered_data <- filtered_data %>%
+  mutate(
+    R1807_factor = factor(
+      # 1. First, translate the numeric codes to text labels
+      x = case_when(
+        R1807 == 1 ~ "Brick/Cement wall",
+        R1807 == 2 ~ "Plastered bamboo/wire mesh",
+        R1807 == 3 ~ "Wood/Planks",
+        R1807 == 4 ~ "Woven bamboo",
+        R1807 == 5 ~ "Wooden poles/logs",
+        R1807 == 6 ~ "Bamboo",
+        R1807 == 7 ~ "Other"
+      ),
+      # 2. Define the order of the levels for consistent tables and plots
+      levels = c(
+        "Brick/Cement wall",
+        "Plastered bamboo/wire mesh",
+        "Wood/Planks",
+        "Woven bamboo",
+        "Wooden poles/logs",
+        "Bamboo",
+        "Other"
+      )
+    )
+  )
+
+# --- Now, create the frequency table for the new factor ---
+wall_material_tabulation <- filtered_data %>%
+  count(R1807_factor)
+
+# --- Print the result to the console ---
+print(wall_material_tabulation)
+
+# You can also check the structure of the new column
+# str(filtered_data$R1807_factor)
+```
+
+## R1808
+
+```{r}
+# Load the dplyr library (if not already loaded)
+library(dplyr)
+
+# --- Mutate the R1808 column into a factor ---
+filtered_data <- filtered_data %>%
+  mutate(
+    R1808_factor = factor(
+      # 1. First, translate the numeric codes to text labels
+      x = case_when(
+        R1808 == 1 ~ "Marble/Granite",
+        R1808 == 2 ~ "Ceramic tiles",
+        R1808 == 3 ~ "Parquet/Vinyl/Carpet",
+        R1808 == 4 ~ "Floor tiles",
+        R1808 == 5 ~ "Wood/Planks",
+        R1808 == 6 ~ "Cement/Red brick",
+        R1808 == 7 ~ "Bamboo",
+        R1808 == 8 ~ "Earth/Soil",
+        R1808 == 9 ~ "Other"
+      ),
+      # 2. Define the order of the levels for consistent tables and plots
+      levels = c(
+        "Marble/Granite",
+        "Ceramic tiles",
+        "Parquet/Vinyl/Carpet",
+        "Floor tiles",
+        "Wood/Planks",
+        "Cement/Red brick",
+        "Bamboo",
+        "Earth/Soil",
+        "Other"
+      )
+    )
+  )
+
+# --- Now, create the frequency table for the new factor ---
+flooring_material_tabulation <- filtered_data %>%
+  count(R1808_factor)
+
+# --- Print the result to the console ---
+print(flooring_material_tabulation)
+
+# You can also check the structure of the new column
+# str(filtered_data$R1808_factor)
+```
+
+## R1809A
+
+```{r}
+# Load the dplyr library (if not already loaded)
+library(dplyr)
+
+# Define the desired order of the categories for the ordinal variable.
+# This reflects the hierarchy from most private to no facility.
+toilet_level_order <- c(
+  "Private (household use only)",
+  "Shared (with specific households)",
+  "Communal facility",
+  "Public facility",
+  "Available, but not used",
+  "No facility"
+)
+
+# --- Mutate the R1809A column into an ordered factor ---
+filtered_data <- filtered_data %>%
+  mutate(
+    R1809A_factor = factor(
+      # 1. First, translate the numeric codes to text labels
+      x = case_when(
+        R1809A == 1 ~ "Private (household use only)",
+        R1809A == 2 ~ "Shared (with specific households)",
+        R1809A == 3 ~ "Communal facility",
+        R1809A == 4 ~ "Public facility",
+        R1809A == 5 ~ "Available, but not used",
+        R1809A == 6 ~ "No facility"
+      ),
+      # 2. Set the levels in the desired hierarchical order
+      levels = toilet_level_order,
+      # 3. Specify that the factor is ordered
+      ordered = TRUE
+    )
+  )
+
+# --- Now, create the frequency table for the new factor ---
+# The count() function will respect the factor's defined order.
+toilet_facility_tabulation <- filtered_data %>%
+  count(R1809A_factor)
+
+# --- Print the result to the console ---
+print(toilet_facility_tabulation)
+
+# You can also check the structure of the new column to confirm it's an ordered factor
+# str(filtered_data$R1809A_factor)
+```
+
+## R1810A, R1811A, R1812, R1813A, R1813B, R1813C
+
+```{r}
+# Load the dplyr library (if not already loaded)
+library(dplyr)
+
+# Define level orders for ordinal variables first for clarity
+water_source_order <- c(
+  "Branded bottled water", "Refilled water", "Piped water", "Borehole/Pump well",
+  "Protected well", "Unprotected well", "Protected spring", "Unprotected spring",
+  "Surface water", "Rainwater", "Other"
+)
+
+water_location_order <- c(
+  "Within house/property",
+  "Outside property"
+)
+
+# --- Process all new variables in a single pipeline ---
+filtered_data <- filtered_data %>%
+  mutate(
+    # R1810A: Primary Source of Drinking Water
+    R1810A_factor = factor(
+      x = case_when(
+        R1810A == 1 ~ "Branded bottled water",
+        R1810A == 2 ~ "Refilled water",
+        R1810A == 3 ~ "Piped water",
+        R1810A == 4 ~ "Borehole/Pump well",
+        R1810A == 5 ~ "Protected well",
+        R1810A == 6 ~ "Unprotected well",
+        R1810A == 7 ~ "Protected spring",
+        R1810A == 8 ~ "Unprotected spring",
+        R1810A == 9 ~ "Surface water",
+        R1810A == 10 ~ "Rainwater",
+        R1810A == 11 ~ "Other"
+      ),
+      levels = water_source_order,
+      ordered = TRUE
+    ),
+    # R1811A: Location of Drinking Water Source
+    R1811A_factor = factor(
+      x = case_when(
+        R1811A == 1 ~ "Within house/property",
+        R1811A == 2 ~ "Outside property"
+      ),
+      levels = water_location_order,
+      ordered = TRUE
+    ),
+    # R1812: Experience of Drinking Water Shortage
+    R1812_factor = factor(
+      x = case_when(
+        R1812 == 1 ~ "Yes",
+        R1812 == 5 ~ "No",
+        R1812 == 8 ~ "Don't know"
+      ),
+      levels = c("Yes", "No", "Don't know")
+    ),
+    # R1813A: Physical Condition - Turbid
+    R1813A_factor = factor(
+      x = case_when(
+        R1813A == 1 ~ "Yes",
+        R1813A == 5 ~ "No"
+      ),
+      levels = c("Yes", "No")
+    ),
+    # R1813B: Physical Condition - Coloured
+    R1813B_factor = factor(
+      x = case_when(
+        R1813B == 1 ~ "Yes",
+        R1813B == 5 ~ "No"
+      ),
+      levels = c("Yes", "No")
+    ),
+    # R1813C: Physical Condition - Tasted
+    R1813C_factor = factor(
+      x = case_when(
+        R1813C == 1 ~ "Yes",
+        R1813C == 5 ~ "No"
+      ),
+      levels = c("Yes", "No")
+    )
+  )
+```
+
+```{r}
+# Create the frequency table for drinking water source
+water_source_tabulation <- filtered_data %>%
+  count(R1810A_factor)
+
+# Print the result
+print(water_source_tabulation)
+```
+
+```{r}
+# Create the frequency table for water source location
+water_location_tabulation <- filtered_data %>%
+  count(R1811A_factor)
+
+# Print the result
+print(water_location_tabulation)
+```
+
+```{r}
+# Create the frequency table for water shortage experience
+water_shortage_tabulation <- filtered_data %>%
+  count(R1812_factor)
+
+# Print the result
+print(water_shortage_tabulation)
+```
+
+```{r}
+# Tabulation for R1813A (Turbid)
+turbid_water_tabulation <- filtered_data %>% count(R1813A_factor)
+print(turbid_water_tabulation)
+
+# Tabulation for R1813B (Coloured)
+coloured_water_tabulation <- filtered_data %>% count(R1813B_factor)
+print(coloured_water_tabulation)
+
+# Tabulation for R1813C (Tasted)
+tasted_water_tabulation <- filtered_data %>% count(R1813C_factor)
+print(tasted_water_tabulation)
+```
+
+## R1813D, R1813E, R1814A, R1815A, R1816, R1817,
+
+```{r}
+# Load the dplyr library (if not already loaded)
+library(dplyr)
+
+# --- Define level orders for ordinal variables first for clarity ---
+
+# Reusing this from the previous step for R1814A
+water_source_order <- c(
+  "Branded bottled water", "Refilled water", "Piped water", "Borehole/Pump well",
+  "Protected well", "Unprotected well", "Protected spring", "Unprotected spring",
+  "Surface water", "Rainwater", "Other"
+)
+
+handwash_location_order <- c(
+  "Yes, inside the house",
+  "Yes, outside the house",
+  "No handwashing place",
+  "Not permitted to see"
+)
+
+lighting_source_order <- c(
+  "PLN electricity with meter",
+  "PLN electricity without meter",
+  "Non-PLN electricity",
+  "Not electricity"
+)
+
+cooking_fuel_order <- c(
+  "Does not cook at home", "Electricity", "LPG 5.5 kg/bluegaz", "LPG 12 kg",
+  "LPG 3 kg", "Piped gas", "Biogas", "Kerosene", "Briquettes", "Charcoal",
+  "Firewood", "Other"
+)
+
+
+# --- Process all new variables in a single pipeline ---
+filtered_data <- filtered_data %>%
+  mutate(
+    # R1813D: Physical Condition - Foamy
+    R1813D_factor = factor(
+      x = case_when(R1813D == 1 ~ "Yes", R1813D == 5 ~ "No"),
+      levels = c("Yes", "No")
+    ),
+    # R1813E: Physical Condition - Odorous
+    R1813E_factor = factor(
+      x = case_when(R1813E == 1 ~ "Yes", R1813E == 5 ~ "No"),
+      levels = c("Yes", "No")
+    ),
+    # R1814A: Main Water Source for Bathing/Washing
+    R1814A_factor = factor(
+      x = case_when(
+        R1814A == 1 ~ "Branded bottled water", R1814A == 2 ~ "Refilled water",
+        R1814A == 3 ~ "Piped water", R1814A == 4 ~ "Borehole/Pump well",
+        R1814A == 5 ~ "Protected well", R1814A == 6 ~ "Unprotected well",
+        R1814A == 7 ~ "Protected spring", R1814A == 8 ~ "Unprotected spring",
+        R1814A == 9 ~ "Surface water", R1814A == 10 ~ "Rainwater",
+        R1814A == 11 ~ "Other"
+      ),
+      levels = water_source_order, ordered = TRUE
+    ),
+    # R1815A: Observation of Handwashing Place
+    R1815A_factor = factor(
+      x = case_when(
+        R1815A == 1 ~ "Yes, inside the house", R1815A == 2 ~ "Yes, outside the house",
+        R1815A == 3 ~ "No handwashing place", R1815A == 4 ~ "Not permitted to see"
+      ),
+      levels = handwash_location_order, ordered = TRUE
+    ),
+    # R1816: Main Source of Household Lighting
+    R1816_factor = factor(
+      x = case_when(
+        R1816 == 1 ~ "PLN electricity with meter", R1816 == 2 ~ "PLN electricity without meter",
+        R1816 == 3 ~ "Non-PLN electricity", R1816 == 4 ~ "Not electricity"
+      ),
+      levels = lighting_source_order, ordered = TRUE
+    ),
+    # R1817: Main Fuel Used for Cooking
+    R1817_factor = factor(
+      x = case_when(
+        R1817 == 0 ~ "Does not cook at home", R1817 == 1 ~ "Electricity",
+        R1817 == 2 ~ "LPG 5.5 kg/bluegaz", R1817 == 3 ~ "LPG 12 kg",
+        R1817 == 4 ~ "LPG 3 kg", R1817 == 5 ~ "Piped gas", R1817 == 6 ~ "Biogas",
+        R1817 == 7 ~ "Kerosene", R1817 == 8 ~ "Briquettes", R1817 == 9 ~ "Charcoal",
+        R1817 == 10 ~ "Firewood", R1817 == 11 ~ "Other"
+      ),
+      levels = cooking_fuel_order, ordered = TRUE
+    )
+  )
+```
+
+```{r}
+# Tabulation for R1813D (Foamy)
+foamy_water_tabulation <- filtered_data %>% count(R1813D_factor)
+print(foamy_water_tabulation)
+
+# Tabulation for R1813E (Odorous)
+odorous_water_tabulation <- filtered_data %>% count(R1813E_factor)
+print(odorous_water_tabulation)
+```
+
+```{r}
+# Create the frequency table for bathing water source
+bathing_water_tabulation <- filtered_data %>% count(R1814A_factor)
+print(bathing_water_tabulation)
+```
+
+```{r}
+# Create the frequency table for handwashing place
+handwash_tabulation <- filtered_data %>% count(R1815A_factor)
+print(handwash_tabulation)
+```
+
+```{r}
+# Create the frequency table for lighting source
+lighting_tabulation <- filtered_data %>% count(R1816_factor)
+print(lighting_tabulation)
+```
+
+```{r}
+# Create the frequency table for cooking fuel
+cooking_fuel_tabulation <- filtered_data %>% count(R1817_factor)
+print(cooking_fuel_tabulation)
+```
+
+## R1901A-R1901K
+
+```{r}
+# Load the dplyr library (if not already loaded)
+library(dplyr)
+
+# --- Process all 'Recipient of Credit' variables in a single pipeline ---
+# Each line creates a new factor column for one of the credit types.
+filtered_data <- filtered_data %>%
+  mutate(
+    # R1901A: Recipient of People's Business Credit (KUR)
+    R1901A_factor = factor(case_when(R1901A == 1 ~ "Yes", R1901A == 5 ~ "No"), levels = c("Yes", "No")),
+
+    # R1901B: Recipient of Credit from Commercial Banks
+    R1901B_factor = factor(case_when(R1901B == 1 ~ "Yes", R1901B == 5 ~ "No"), levels = c("Yes", "No")),
+
+    # R1901C: Recipient of Credit from Rural Banks (BPR)
+    R1901C_factor = factor(case_when(R1901C == 1 ~ "Yes", R1901C == 5 ~ "No"), levels = c("Yes", "No")),
+
+    # R1901D: Recipient of Credit from Cooperatives
+    R1901D_factor = factor(case_when(R1901D == 1 ~ "Yes", R1901D == 5 ~ "No"), levels = c("Yes", "No")),
+
+    # R1901E: Recipient of Personal Loans with Interest
+    R1901E_factor = factor(case_when(R1901E == 1 ~ "Yes", R1901E == 5 ~ "No"), levels = c("Yes", "No")),
+
+    # R1901F: Recipient of Pawnshop Loans
+    R1901F_factor = factor(case_when(R1901F == 1 ~ "Yes", R1901F == 5 ~ "No"), levels = c("Yes", "No")),
+
+    # R1901G: Recipient of Leasing Company Credit
+    R1901G_factor = factor(case_when(R1901G == 1 ~ "Yes", R1901G == 5 ~ "No"), levels = c("Yes", "No")),
+
+    # R1901H: Recipient of Village-Owned Enterprise (BUMDES) Credit
+    R1901H_factor = factor(case_when(R1901H == 1 ~ "Yes", R1901H == 5 ~ "No"), levels = c("Yes", "No")),
+
+    # R1901I: Recipient of Online Loans
+    R1901I_factor = factor(case_when(R1901I == 1 ~ "Yes", R1901I == 5 ~ "No"), levels = c("Yes", "No")),
+
+    # R1901J: Recipient of PNM-Mekaar Credit
+    R1901J_factor = factor(case_when(R1901J == 1 ~ "Yes", R1901J == 5 ~ "No"), levels = c("Yes", "No")),
+    
+    # R1901K: OTHERS
+    R1901K_factor = factor(case_when(R1901K == 1 ~ "Yes", R1901K == 5 ~ "No"), levels = c("Yes", "No"))
+  )
+```
+
+```{r}
+# R1901A: Recipient of People's Business Credit (KUR)
+tabulation_R1901A <- filtered_data %>% count(R1901A_factor)
+print(tabulation_R1901A)
+
+# R1901B: Recipient of Credit from Commercial Banks
+tabulation_R1901B <- filtered_data %>% count(R1901B_factor)
+print(tabulation_R1901B)
+
+# R1901C: Recipient of Credit from Rural Banks (BPR)
+tabulation_R1901C <- filtered_data %>% count(R1901C_factor)
+print(tabulation_R1901C)
+
+# R1901D: Recipient of Credit from Cooperatives
+tabulation_R1901D <- filtered_data %>% count(R1901D_factor)
+print(tabulation_R1901D)
+
+# R1901E: Recipient of Personal Loans with Interest
+tabulation_R1901E <- filtered_data %>% count(R1901E_factor)
+print(tabulation_R1901E)
+
+# R1901F: Recipient of Pawnshop Loans
+tabulation_R1901F <- filtered_data %>% count(R1901F_factor)
+print(tabulation_R1901F)
+
+# R1901G: Recipient of Leasing Company Credit
+tabulation_R1901G <- filtered_data %>% count(R1901G_factor)
+print(tabulation_R1901G)
+
+# R1901H: Recipient of Village-Owned Enterprise (BUMDES) Credit
+tabulation_R1901H <- filtered_data %>% count(R1901H_factor)
+print(tabulation_R1901H)
+
+# R1901I: Recipient of Online Loans
+tabulation_R1901I <- filtered_data %>% count(R1901I_factor)
+print(tabulation_R1901I)
+
+# R1901J: Recipient of PNM-Mekaar Credit
+tabulation_R1901J <- filtered_data %>% count(R1901J_factor)
+print(tabulation_R1901J)
+
+# R1901K: OTHERS
+tabulation_R1901K <- filtered_data %>% count(R1901K_factor)
+print(tabulation_R1901K)
+```
+
+## R2001A - R2001M
+
+```{r}
+# Load the dplyr library (if not already loaded)
+library(dplyr)
+
+# --- Process all 'Household Asset' variables (R2001A to R2001M) ---
+filtered_data <- filtered_data %>%
+  mutate(
+    # R2001A: Possession of 5.5 kg or Larger Gas Cylinder
+    R2001A_factor = factor(case_when(R2001A == 1 ~ "Yes", R2001A == 5 ~ "No"), levels = c("Yes", "No")),
+
+    # R2001B: Possession of Refrigerator
+    R2001B_factor = factor(case_when(R2001B == 1 ~ "Yes", R2001B == 5 ~ "No"), levels = c("Yes", "No")),
+
+    # R2001C: Possession of Air Conditioning (AC)
+    R2001C_factor = factor(case_when(R2001C == 1 ~ "Yes", R2001C == 5 ~ "No"), levels = c("Yes", "No")),
+
+    # R2001D: Possession of Water Heater
+    R2001D_factor = factor(case_when(R2001D == 1 ~ "Yes", R2001D == 5 ~ "No"), levels = c("Yes", "No")),
+
+    # R2001E: Possession of Landline Telephone (PSTN)
+    R2001E_factor = factor(case_when(R2001E == 1 ~ "Yes", R2001E == 5 ~ "No"), levels = c("Yes", "No")),
+
+    # R2001F: Possession of Computer/Laptop
+    R2001F_factor = factor(case_when(R2001F == 1 ~ "Yes", R2001F == 5 ~ "No"), levels = c("Yes", "No")),
+
+    # R2001G: Possession of Gold/Jewellery (minimum 10 grams)
+    R2001G_factor = factor(case_when(R2001G == 1 ~ "Yes", R2001G == 5 ~ "No"), levels = c("Yes", "No")),
+
+    # R2001H: Possession of Motorcycle
+    R2001H_factor = factor(case_when(R2001H == 1 ~ "Yes", R2001H == 5 ~ "No"), levels = c("Yes", "No")),
+
+    # R2001I: Possession of Boat
+    R2001I_factor = factor(case_when(R2001I == 1 ~ "Yes", R2001I == 5 ~ "No"), levels = c("Yes", "No")),
+
+    # R2001J: Possession of Motorboat
+    R2001J_factor = factor(case_when(R2001J == 1 ~ "Yes", R2001J == 5 ~ "No"), levels = c("Yes", "No")),
+
+    # R2001K: Possession of Car
+    R2001K_factor = factor(case_when(R2001K == 1 ~ "Yes", R2001K == 5 ~ "No"), levels = c("Yes", "No")),
+
+    # R2001L: Possession of Flat Screen Television (minimum 30 inch)
+    R2001L_factor = factor(case_when(R2001L == 1 ~ "Yes", R2001L == 5 ~ "No"), levels = c("Yes", "No")),
+
+    # R2001M: Possession of Land
+    R2001M_factor = factor(case_when(R2001M == 1 ~ "Yes", R2001M == 5 ~ "No"), levels = c("Yes", "No"))
+  )
+```
+
+```{r}
+# R2001A: Gas Cylinder
+tabulation_R2001A <- filtered_data %>% count(R2001A_factor)
+print(tabulation_R2001A)
+
+# R2001B: Refrigerator
+tabulation_R2001B <- filtered_data %>% count(R2001B_factor)
+print(tabulation_R2001B)
+
+# R2001C: Air Conditioning
+tabulation_R2001C <- filtered_data %>% count(R2001C_factor)
+print(tabulation_R2001C)
+
+# R2001D: Water Heater
+tabulation_R2001D <- filtered_data %>% count(R2001D_factor)
+print(tabulation_R2001D)
+
+# R2001E: Landline Telephone
+tabulation_R2001E <- filtered_data %>% count(R2001E_factor)
+print(tabulation_R2001E)
+
+# R2001F: Computer/Laptop
+tabulation_R2001F <- filtered_data %>% count(R2001F_factor)
+print(tabulation_R2001F)
+
+# R2001G: Gold/Jewellery
+tabulation_R2001G <- filtered_data %>% count(R2001G_factor)
+print(tabulation_R2001G)
+
+# R2001H: Motorcycle
+tabulation_R2001H <- filtered_data %>% count(R2001H_factor)
+print(tabulation_R2001H)
+
+# R2001I: Boat
+tabulation_R2001I <- filtered_data %>% count(R2001I_factor)
+print(tabulation_R2001I)
+
+# R2001J: Motorboat
+tabulation_R2001J <- filtered_data %>% count(R2001J_factor)
+print(tabulation_R2001J)
+
+# R2001K: Car
+tabulation_R2001K <- filtered_data %>% count(R2001K_factor)
+print(tabulation_R2001K)
+
+# R2001L: Flat Screen TV
+tabulation_R2001L <- filtered_data %>% count(R2001L_factor)
+print(tabulation_R2001L)
+
+# R2001M: Land
+tabulation_R2001M <- filtered_data %>% count(R2001M_factor)
+print(tabulation_R2001M)
+```
+
+## R2201A2 - R2201F2 (exclude D2)
+
+```{r}
+# Load the dplyr library (if not already loaded)
+library(dplyr)
+
+# --- Process Social Security/Guarantee variables ---
+filtered_data <- filtered_data %>%
+  mutate(
+    # R2201A2: Recipient of Pension/Veteran's Guarantee
+    R2201A2_factor = factor(case_when(R2201A2 == 1 ~ "Yes", R2201A2 == 5 ~ "No"), levels = c("Yes", "No")),
+
+    # R2201B2: Recipient of Old Age Security
+    R2201B2_factor = factor(case_when(R2201B2 == 1 ~ "Yes", R2201B2 == 5 ~ "No"), levels = c("Yes", "No")),
+
+    # R2201C2: Recipient of Work Accident Insurance
+    R2201C2_factor = factor(case_when(R2201C2 == 1 ~ "Yes", R2201C2 == 5 ~ "No"), levels = c("Yes", "No")),
+
+    # R2201E2: Recipient of Job Loss Guarantee (JKP)
+    R2201E2_factor = factor(case_when(R2201E2 == 1 ~ "Yes", R2201E2 == 5 ~ "No"), levels = c("Yes", "No")),
+
+    # R2201F2: Recipient of Redundancy Pay
+    R2201F2_factor = factor(case_when(R2201F2 == 1 ~ "Yes", R2201F2 == 5 ~ "No"), levels = c("Yes", "No"))
+  )
+```
+
+```{r}
+# R2201A2: Pension/Veteran's Guarantee
+tabulation_R2201A2 <- filtered_data %>% count(R2201A2_factor)
+print(tabulation_R2201A2)
+
+# R2201B2: Old Age Security
+tabulation_R2201B2 <- filtered_data %>% count(R2201B2_factor)
+print(tabulation_R2201B2)
+
+# R2201C2: Work Accident Insurance
+tabulation_R2201C2 <- filtered_data %>% count(R2201C2_factor)
+print(tabulation_R2201C2)
+
+# R2201E2: Job Loss Guarantee (JKP)
+tabulation_R2201E2 <- filtered_data %>% count(R2201E2_factor)
+print(tabulation_R2201E2)
+
+# R2201F2: Redundancy Pay
+tabulation_R2201F2 <- filtered_data %>% count(R2201F2_factor)
+print(tabulation_R2201F2)
+```
+
+## 
+
+```{r}
+# Load the dplyr library (if not already loaded)
+library(dplyr)
+
+# --- Process all social assistance variables in a single pipeline ---
+filtered_data <- filtered_data %>%
+  mutate(
+    # R2202: Recipient of Prosperous Family Card (KKS)
+    R2202_factor = factor(
+      x = case_when(
+        R2202 == 1 ~ "Yes, can show card",
+        R2202 == 2 ~ "Yes, cannot show card",
+        R2202 == 5 ~ "No"
+      ),
+      levels = c("Yes, can show card", "Yes, cannot show card", "No")
+    ),
+
+    # R2203: Previous Recipient of Family Hope Programme (PKH)
+    R2203_factor = factor(
+        case_when(R2203 == 1 ~ "Yes", R2203 == 5 ~ "No"),
+        levels = c("Yes", "No")
+    ),
+
+    # R2204A: Current Recipient of Family Hope Programme (PKH)
+    R2204A_factor = factor(
+      x = case_when(
+        R2204A == 1 ~ "Yes",
+        R2204A == 5 ~ "No",
+        R2204A == 8 ~ "Don't know"
+      ),
+      levels = c("Yes", "No", "Don't know")
+    ),
+
+    # R2209A: Recipient of Village Direct Cash Assistance (BLT Desa)
+    R2209A_factor = factor(
+        case_when(R2209A == 1 ~ "Yes", R2209A == 5 ~ "No"),
+        levels = c("Yes", "No")
+    ),
+
+    # R2209B: Recipient of Cash for Work Programme (PKTD)
+    R2209B_factor = factor(
+        case_when(R2209B == 1 ~ "Yes", R2209B == 5 ~ "No"),
+        levels = c("Yes", "No")
+    ),
+
+    # R2209C: Recipient of Food/Rice Assistance
+    R2209C_factor = factor(
+        case_when(R2209C == 1 ~ "Yes", R2209C == 5 ~ "No"),
+        levels = c("Yes", "No")
+    ),
+
+    # R2209D: Recipient of Land Certification Assistance
+    R2209D_factor = factor(
+        case_when(R2209D == 1 ~ "Yes", R2209D == 5 ~ "No"),
+        levels = c("Yes", "No")
+    )
+  )
+```
+
+```{r}
+# Create the frequency table for KKS recipients
+kks_tabulation <- filtered_data %>% count(R2202_factor)
+print(kks_tabulation)
+
+# Create the frequency table for previous PKH recipients
+previous_pkh_tabulation <- filtered_data %>% count(R2203_factor)
+print(previous_pkh_tabulation)
+
+# Create the frequency table for current PKH recipients
+current_pkh_tabulation <- filtered_data %>% count(R2204A_factor)
+print(current_pkh_tabulation)
+
+# R2209A: Village Direct Cash Assistance (BLT Desa)
+blt_desa_tabulation <- filtered_data %>% count(R2209A_factor)
+print(blt_desa_tabulation)
+
+# R2209B: Cash for Work Programme (PKTD)
+pktd_tabulation <- filtered_data %>% count(R2209B_factor)
+print(pktd_tabulation)
+
+# R2209C: Food/Rice Assistance
+food_assistance_tabulation <- filtered_data %>% count(R2209C_factor)
+print(food_assistance_tabulation)
+
+# R2209D: Land Certification Assistance
+land_cert_tabulation <- filtered_data %>% count(R2209D_factor)
+print(land_cert_tabulation)
+```
+
+# NEW FILTERED DATA
+
+```{r}
+selected_features <- c(
+  # Household characteristics (factored)
+  "R1802_factor", "R1804", "R1805_factor", "R1806A_factor", "R1807_factor",
+  "R1808_factor", "R1809A_factor", "R1810A_factor", "R1811A_factor", "R1812_factor",
+  "R1813A_factor", "R1813B_factor", "R1813C_factor", "R1813D_factor", "R1813E_factor",
+  "R1814A_factor", "R1815A_factor", "R1816_factor", "R1817_factor",
+  "R1901A_factor", "R1901B_factor", "R1901C_factor", "R1901D_factor", "R1901E_factor",
+  "R1901F_factor", "R1901G_factor", "R1901H_factor", "R1901I_factor", "R1901J_factor",
+  "R1901K_factor", "R2001A_factor", "R2001B_factor", "R2001C_factor", "R2001D_factor",
+  "R2001E_factor", "R2001F_factor", "R2001G_factor", "R2001H_factor", "R2001I_factor",
+  "R2001J_factor", "R2001K_factor", "R2001L_factor", "R2001M_factor",
+  "R2201A2_factor", "R2201B2_factor", "R2201C2_factor", "R2201E2_factor", "R2201F2_factor",
+  "R2202_factor", "R2203_factor", "R2209A_factor", "R2209B_factor",
+  "R2209C_factor", "R2209D_factor",
+
+  # Pooled age features
+  "head_age", "oldest_age", "age_gap", "n_children_lt15", "n_elderly_60", "avg_age",
+
+  # Pooled gender and marital status features
+  "sex_head_factor", "head_marital_factor", "n_married", "is_single_parent_factor",
+
+  # Pooled relationship features
+  "n_nuclear", "n_non_nuclear", "n_children", "n_elderly_parents",
+
+  # Pooled school features
+  "n_currently_school", "n_school_age_not_in_school", "any_in_school_factor",
+
+  # Pooled education features
+  "edu_head_group", "edu_highest_group", "edu_lowest_group",
+  "prop_adult_smp_plus", "avg_edu_years",
+
+  # Pooled certificate and assistance features
+  "highest_cert_group", "n_sma_or_higher", "has_tertiary",
+  "n_kip", "n_pip",
+
+  # Pooled savings and financial service features
+  "n_with_saving", "prop_with_saving", "has_saving_factor", "head_saving_factor",
+  "n_uses_fin_service", "prop_uses_fin_service", "head_fin_service_factor",
+
+  # Pooled activity, sector, and job status features
+  "head_activity_factor", "n_working", "n_school", "n_household",
+  "head_sector_factor", "common_sector_factor", "head_jobstatus_label",
+  "n_permanent", "n_unpaid", "n_self_employed", "n_casual",
+
+  # Pooled working hours features
+  "avg_working_hours", "max_working_hours", "head_working_hours",
+
+  # Pooled mobile and health behaviour features
+  "any_mobile_user_factor", "head_mobile_user_factor", "n_owns_mobile",
+  "all_adults_mobile_owner_factor", "head_mobile_owner_factor",
+  "prop_uses_ecig", "head_ecig_user_factor",
+  "prop_current_smokers", "head_smoker_factor",
+  "avg_cigs_per_smoker", "max_cigs_per_member", "head_cigs_week",
+  "n_ever_smoked", "head_ever_smoked_factor",
+
+  # Target variable (if needed)
+  "MISKIN_KAKO"
+)
+```
+
+```{r}
+# Create a new dataframe with only the selected, cleaned features
+final_analysis_data <- select(filtered_data, all_of(selected_features))
+```
+
+```{r}
+library(writexl)
+# Use the write_xlsx() function to export the dataframe
+# write_xlsx(final_analysis_data, "final_analysis_data_export.xlsx")
+
+```
+
+## Check NA
+
+```{r}
+# Count number of NAs in each column
+na_counts <- sapply(final_analysis_data, function(x) sum(is.na(x)))
+
+# Filter only columns that have at least one NA
+na_table <- data.frame(
+  Column_Name = names(na_counts)[na_counts > 0],
+  Number_of_NA = na_counts[na_counts > 0],
+  row.names = NULL
+)
+
+# View the result
+print(na_table)
+```
+
+# make data susenas backup
+
+```{r}
+final_analysis_data_backup <- final_analysis_data
+```
+
+```{r}
+# saveRDS(final_analysis_data, file = "final_analysis_data.rds")
+```
