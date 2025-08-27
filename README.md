@@ -4,6 +4,8 @@ Code for the empirical study on multidimensional poverty in Sulawesi Tengah (Ind
 
 > **Data not included.** This repository is **code-only**. See **Data Access** for instructions.
 
+---
+
 ## Repository structure
 
 ```text
@@ -24,6 +26,8 @@ Dissertation on Poverty Analysis/
 └─ README.md
 ```
 
+---
+
 ## Software requirements
 
 - **R 4.4.1** (or newer in the 4.4 series)  
@@ -34,7 +38,9 @@ Dissertation on Poverty Analysis/
   - **Modelling:** `caret`, `ranger` (Random Forest), `xgboost`, `pROC`, `ROCR`  
   - **Resampling/SMOTE:** `DMwR` (or `themis` if you prefer tidymodels)  
   - **Tables/knit:** `knitr`, `kableExtra`, `gt`  
-  - **Pipeline:** `targets`, `tarchetypes`  
+  - **Pipeline:** `targets`, `tarchetypes`
+ 
+---
 
 ## Data access
 
@@ -42,6 +48,8 @@ This project uses **SUSENAS** microdata (National Socio-Economic Survey) adminis
 
 - To request access, please **contact Statistics Indonesia (BPS)** through official channels.  
 - After approval, place files in a **local, private** directory (not tracked by Git). The notebooks expect paths you will define at the top of each `.Rmd`.
+
+---
 
 ## Reproduction notes
 
