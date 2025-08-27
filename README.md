@@ -1,6 +1,6 @@
 # Dissertation on Poverty Analysis
 
-Code for the empirical study on multidimensional poverty in Sulawesi Tengah (Indonesia), covering **factor analysis (FAMD)**, **clustering**, and **predictive modelling** at both **individual** and **household** levels.
+Code for the empirical study on poverty analysis in Sulawesi Tengah (Indonesia), covering **factor analysis (FAMD)**, **clustering**, and **predictive modelling** at both **individual** and **household** levels.
 
 > **Data not included.** This repository is **code-only**. See **Data Access** for instructions.
 
@@ -9,20 +9,17 @@ Code for the empirical study on multidimensional poverty in Sulawesi Tengah (Ind
 ## Repository structure
 
 ```text
-Dissertation on Poverty Analysis/
+Poverty-Analysis/
 ├─ Household Analysis/
-│  ├─ 01_factor.Rmd
-│  ├─ 02_cluster.Rmd
-│  ├─ 03_model.Rmd
-│  ├─ utils_household.R
-│  └─ _targets.R
+│  ├─ 1. Data Pre Processing.Rmd
+│  ├─ 2. Factor Analysis and Clustering.Rmd
+│  ├─ 3. Modelling with Latent Factor.Rmd
+│  └─ 4. Modelling with all Variables.Rmd
 ├─ Individual Analysis/
-│  ├─ 01_factor.Rmd
-│  ├─ 02_cluster.Rmd
-│  ├─ 03_model.Rmd
-│  ├─ utils_individual.R
-│  └─ _targets.R
-├─ Makefile
+│  ├─ 1. Data Pre Processing.Rmd
+│  ├─ 2. Factor Analysis and Clustering.Rmd
+│  ├─ 3. Modelling with Latent Factor.Rmd
+│  └─ 4. Modelling with all Variables.Rmd
 └─ README.md
 ```
 
